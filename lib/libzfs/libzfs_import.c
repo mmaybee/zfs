@@ -912,7 +912,7 @@ refresh_config(libzfs_handle_t *hdl, nvlist_t *config)
 /*
  * Determine if the vdev id is a hole in the namespace.
  */
-boolean_t
+static boolean_t
 vdev_is_hole(uint64_t *hole_array, uint_t holes, uint_t id)
 {
 	int c;
@@ -2144,17 +2144,6 @@ zpool_find_import_impl(libzfs_handle_t *hdl, importargs_t *iarg)
 	}
 
 	return (ret);
-}
-
-nvlist_t *
-zpool_find_import(libzfs_handle_t *hdl, int argc, char **argv)
-{
-	importargs_t iarg = { 0 };
-
-	iarg.paths = argc;
-	iarg.path = argv;
-
-	return (zpool_find_import_impl(hdl, &iarg));
 }
 
 /*

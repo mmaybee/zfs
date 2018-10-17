@@ -429,7 +429,6 @@ extern int zpool_tryimport(libzfs_handle_t *hdl, char *target,
     nvlist_t **configp, importargs_t *args);
 
 /* legacy pool search routines */
-extern nvlist_t *zpool_find_import(libzfs_handle_t *, int, char **);
 extern nvlist_t *zpool_find_import_cached(libzfs_handle_t *, const char *,
     char *, uint64_t);
 
