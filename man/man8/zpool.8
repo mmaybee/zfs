@@ -179,7 +179,7 @@
 .Nm
 .Cm status
 .Oo Fl c Ar SCRIPT Oc
-.Op Fl gLPvxD
+.Op Fl gjLPvxD
 .Op Fl T Sy u Ns | Ns Sy d
 .Oo Ar pool Oc Ns ...
 .Op Ar interval Op Ar count
@@ -2156,7 +2156,7 @@ and automatically import it.
 .Nm
 .Cm status
 .Op Fl c Op Ar SCRIPT1 Ns Oo , Ns Ar SCRIPT2 Oc Ns ...
-.Op Fl gLPvxD
+.Op Fl gjLPvxD
 .Op Fl T Sy u Ns | Ns Sy d
 .Oo Ar pool Oc Ns ...
 .Op Ar interval Op Ar count
@@ -2187,6 +2187,10 @@ for complete details.
 Display vdev GUIDs instead of the normal device names. These GUIDs
 can be used in place of device names for the zpool
 detach/offline/remove/replace commands.
+.It Fl j
+Provides a JSON formatted dump of the given pools complete status on stdout
+rather than output formatted for easy human readability.  Selecting JSON
+output causes other status display options to be ignored.
 .It Fl L
 Display real paths for vdevs resolving all symbolic links. This can
 be used to look up the current block device name regardless of the

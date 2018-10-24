@@ -297,6 +297,7 @@ static zpool_command_t command_table[] = {
 static zpool_command_t *current_command;
 static char history_str[HIS_MAX_RECORD_LEN];
 static boolean_t log_history = B_TRUE;
+static boolean_t json_output = B_FALSE;
 static uint_t timestamp_fmt = NODATE;
 
 static const char *
@@ -359,7 +360,7 @@ get_usage(zpool_help_t idx)
 	case HELP_SCRUB:
 		return (gettext("\tscrub [-s | -p] <pool> ...\n"));
 	case HELP_STATUS:
-		return (gettext("\tstatus [-c [script1,script2,...]] [-gLPvxD]"
+		return (gettext("\tstatus [-c [script1,script2,...]] [-gLPjvxD]"
 		    "[-T d|u] [pool] ... \n"
 		    "\t    [interval [count]]\n"));
 	case HELP_UPGRADE:
@@ -6801,6 +6802,11 @@ status_callback(zpool_handle_t *zhp, void *data)
 
 	cbp->cb_count++;
 
+	if (json_output) {
+		(void) nvlist_print_json(stdout, config);
+		return (0);
+	}
+
 	/*
 	 * If we were given 'zpool status -x', only report those pools with
 	 * problems.
@@ -7175,11 +7181,12 @@ status_callback(zpool_handle_t *zhp, void *data)
 }
 
 /*
- * zpool status [-c [script1,script2,...]] [-gLPvx] [-T d|u] [pool] ...
+ * zpool status [-c [script1,script2,...]] [-gjLPvx] [-T d|u] [pool] ...
  *              [interval [count]]
  *
  *	-c CMD	For each vdev, run command CMD
  *	-g	Display guid for individual vdev name.
+ *	-j	Output json rather than formatted text.
  *	-L	Follow links when resolving vdev path name.
  *	-P	Display full path for vdev name.
  *	-v	Display complete error logs
@@ -7200,7 +7207,7 @@ zpool_do_status(int argc, char **argv)
 	char *cmd = NULL;
 
 	/* check options */
-	while ((c = getopt(argc, argv, "c:gLPvxDT:")) != -1) {
+	while ((c = getopt(argc, argv, "c:gjLPvxDT:")) != -1) {
 		switch (c) {
 		case 'c':
 			if (cmd != NULL) {
@@ -7228,6 +7235,9 @@ zpool_do_status(int argc, char **argv)
 			break;
 		case 'g':
 			cb.cb_name_flags |= VDEV_NAME_GUID;
+			break;
+		case 'j':
+			json_output = B_TRUE;
 			break;
 		case 'L':
 			cb.cb_name_flags |= VDEV_NAME_FOLLOW_LINKS;
