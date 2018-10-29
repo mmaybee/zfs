@@ -257,7 +257,7 @@ zpool_feature_init(void)
 
 	zfeature_register(SPA_FEATURE_DRAID,
 	    "com.intel:draid", "draid", "draid vdev driver.",
-	    ZFEATURE_FLAG_MOS, NULL);
+	    ZFEATURE_FLAG_MOS, ZFEATURE_TYPE_BOOLEAN, NULL);
 
 	zfeature_register(SPA_FEATURE_SPACEMAP_HISTOGRAM,
 	    "com.delphix:spacemap_histogram", "spacemap_histogram",
