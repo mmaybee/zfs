@@ -41,6 +41,24 @@ extern "C" {
  */
 #define	FTAG ((char *)(uintptr_t)__func__)
 
+/* CRAY BEGIN */
+/*
+ * XXX- This was removed sometime between 0.7.9 and 0.8.0, adding back because
+ * Cray Lustre (cray-2.11-int branch) still uses the refcount_add() interface.
+ * This should be removed if/when this is fixed in Lustre.
+ */
+/*
+ * Starting with 4.11, torvalds/linux@f405df5, the linux kernel defines a
+ * refcount_t type of its own.  The macro below effectively changes references
+ * in the ZFS code from refcount_t to zfs_refcount_t at compile time, so that
+ * existing code need not be altered, reducing conflicts when landing openZFS
+ * patches.
+ */
+
+#define refcount_t	zfs_refcount_t
+#define refcount_add	zfs_refcount_add
+/* CRAY END */
+
 #ifdef	ZFS_DEBUG
 typedef struct reference {
 	list_node_t ref_link;
