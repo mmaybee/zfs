@@ -16,6 +16,7 @@ PROJECT=${JP_NEO_RELEASE:-NEO3.X}
 SCM_URL=${JP_SCM_URL:-http://es-gerrit.dev.cray.com/zfs}
 VERS_BASE=${JP_VERS_BASE:-x3.2}
 BUILD_NUMBER=${BUILD_NUMBER:-1}
+WORKSPACE=${WORKSPACE:-$(pwd)}
 
 RELEASE_ID=$VERS_BASE
 
@@ -27,29 +28,79 @@ echo "Release: $RELEASE_ID" >> META
 echo "License: CDDL" >> META
 echo "Author: Cray" >> META
 
-sh ./autogen.sh >& autogen.log
-rval=$?
-if [ "$rval" != "0" ] ; then
+MOCK="/usr/bin/mock -r mock_${PROJECT}"
+
+# Initialize the chroot build environment for this configuration
+${MOCK} --init
+if [ "$?" != 0 ] ; then
 	echo "BUILD FAILED"
-	exit $rval
+	exit -1
 fi
 
-./configure --with-spec=redhat >& configure.log
-rval=$?
-if [ "$rval" != "0" ] ; then
+# Install needed packages not already provided by the config
+${MOCK} --install autoconf automake libtool zlib-devel libuuid-devel libblkid-devel openssl-devel kernel-devel rpm-build systemd-devel libattr-devel libaio-devel libffi-devel git
+if [ "$?" != 0 ] ; then
 	echo "BUILD FAILED"
-	exit $rval
+	exit -1
 fi
 
-make rpms >& make.log
-rval=$?
-if [ "$rval" != "0" ] ; then
-	echo "BUILD_FAILED"
-	exit $rval
+# Copy in the source
+rm -rf RPMBUILD
+${MOCK} --copyin ${WORKSPACE} /build/zfs
+if [ "$?" != 0 ] ; then
+	echo "BUILD FAILED"
+	exit -1
+fi
+
+# Build the rpms in the chroot environment
+cat << EOF | ${MOCK} shell
+cd /build/zfs
+
+# Autogen
+sh ./autogen.sh
+rval=\$?
+if [ "\$rval" != "0" ] ; then
+	exit \$rval
+fi
+
+# Configure
+./configure --with-spec=redhat
+rval=\$?
+if [ "\$rval" != "0" ] ; then
+	exit \$rval
+fi
+
+# Make
+make rpms
+rval=\$?
+
+exit \$rval
+EOF
+if [ "$?" != 0 ] ; then
+	echo "BUILD FAILED"
+	exit -1
 fi
 
 mv META META.jenkins
 mv META.default META
+
+# Copy out the rpms
+mkdir -p RPMBUILD/RPMS RPMBUILD/SRPMS
+${MOCK} --copyout /build/zfs/*.x86_64.rpm RPMBUILD/RPMS
+if [ "$?" != 0 ] ; then
+	echo "BUILD FAILED"
+	exit -1
+fi
+
+# Copy out the source rpms
+${MOCK} --copyout /build/zfs/*.src.rpm RPMBUILD/SRPMS
+if [ "$?" != 0 ] ; then
+	echo "BUILD FAILED"
+	exit -1
+fi
+
+# Clean up
+${MOCK} --clean
 
 echo "Complete Build"
 exit 0

@@ -83,5 +83,5 @@ rpm-common:
 		--define "_tmppath $$rpmbuild/TMP" \
 		--define "_topdir $$rpmbuild" \
 		$(def) --rebuild $$rpmpkg || exit 1; \
-	cp $$rpmbuild/RPMS/*/* . || exit 1; \
+	cp $$rpmbuild/RPMS/*/* . || cp $$rpmbuild/RPMS/* . || exit 1; \
 	rm -R $$rpmbuild)
