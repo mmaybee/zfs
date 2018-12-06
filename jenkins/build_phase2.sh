@@ -74,6 +74,9 @@ fi
 make rpms
 rval=\$?
 
+mkdir RPMBUILD
+mv *.rpm RPMBUILD
+
 exit \$rval
 EOF
 if [ "$?" != 0 ] ; then
@@ -85,15 +88,7 @@ mv META META.jenkins
 mv META.default META
 
 # Copy out the rpms
-mkdir -p RPMBUILD/RPMS RPMBUILD/SRPMS
-${MOCK} --copyout /build/zfs/*.x86_64.rpm RPMBUILD/RPMS
-if [ "$?" != 0 ] ; then
-	echo "BUILD FAILED"
-	exit -1
-fi
-
-# Copy out the source rpms
-${MOCK} --copyout /build/zfs/*.src.rpm RPMBUILD/SRPMS
+${MOCK} --copyout /build/zfs/RPMBUILD RPMBUILD
 if [ "$?" != 0 ] ; then
 	echo "BUILD FAILED"
 	exit -1
