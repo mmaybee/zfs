@@ -68,11 +68,30 @@ log_must zdb -kd $TESTPOOL/$TESTFS@snap
 log_must zpool checkpoint -d $TESTPOOL
 
 log_must zpool export $TESTPOOL
+if is_linux; then
+	TDISK=${DISKS%% *}
+	if is_real_device $TDISK; then
+		case $TDISK in
+		nvme*p* ) # an nvme partition
+			PATH_ARG="-p /$DEV_RDSKDIR/$TDISK" ;;
+		nvme* ) # a whole nvme device
+			PATH_ARG="-p /$DEV_RDSKDIR/${TDISK}p1" ;;
+		sd*[1-9] ) # a hard disk partition
+			PATH_ARG="-p /$DEV_RDSKDIR/${TDISK}" ;;
+		sd* ) # a whole hard disk
+			PATH_ARG="-p /$DEV_RDSKDIR/${TDISK}1" ;;
+		esac
+	else # a file
+		PATH_ARG="-p /$DEV_RDSKDIR/$TDISK"
+	fi
+else
+	PATH_ARG=""
+fi
 
-log_must zdb -ed $TESTPOOL
-log_must zdb -ed $TESTPOOL/
-log_must zdb -ed $TESTPOOL/$TESTFS
-log_must zdb -ed $TESTPOOL/$TESTFS@snap
+log_must zdb -ed $PATH_ARG $TESTPOOL
+log_must zdb -ed $PATH_ARG $TESTPOOL/
+log_must zdb -ed $PATH_ARG $TESTPOOL/$TESTFS
+log_must zdb -ed $PATH_ARG $TESTPOOL/$TESTFS@snap
 
 log_must zpool import $TESTPOOL
 

@@ -44,6 +44,7 @@ typedef struct mmp_thread {
 	zio_t		*mmp_zio_root;	/* root of mmp write zios */
 	uint64_t	mmp_kstat_id;	/* unique id for next MMP write kstat */
 	int		mmp_skip_error; /* reason for last skipped write */
+	int		mmp_nleaves;	/* cached no. of leaf vdevs */
 } mmp_thread_t;
 
 
@@ -53,6 +54,8 @@ extern void mmp_thread_start(struct spa *spa);
 extern void mmp_thread_stop(struct spa *spa);
 extern void mmp_update_uberblock(struct spa *spa, struct uberblock *ub);
 extern void mmp_signal_all_threads(void);
+extern int mmp_vdev_passivate(vdev_t *);
+extern void mmp_vdev_unpassivate(vdev_t *);
 
 /* Global tuning */
 extern ulong_t zfs_multihost_interval;

@@ -1322,7 +1322,9 @@ zap_update(objset_t *os, uint64_t zapobj, const char *name,
 	} else {
 		mzap_ent_t *mze = mze_find(zn);
 		if (mze != NULL) {
+#ifdef ZFS_DEBUG
 			ASSERT3U(MZE_PHYS(zap, mze)->mze_value, ==, oldval);
+#endif
 			MZE_PHYS(zap, mze)->mze_value = *intval;
 		} else {
 			mzap_addent(zn, *intval);

@@ -5907,17 +5907,6 @@ spa_vdev_add(spa_t *spa, nvlist_t *nvroot)
 			draid++;
 	}
 
-	if (draid != 0) {
-		dmu_tx_t *tx;
-
-		tx = dmu_tx_create_assigned(spa->spa_dsl_pool, txg);
-
-		for (c = 0; c < draid; c++)
-			spa_feature_incr(spa, SPA_FEATURE_DRAID, tx);
-
-		dmu_tx_commit(tx);
-	}
-
 	if (nspares != 0) {
 		spa_set_aux_vdevs(&spa->spa_spares, spares, nspares,
 		    ZPOOL_CONFIG_SPARES);
@@ -5945,7 +5934,23 @@ spa_vdev_add(spa_t *spa, nvlist_t *nvroot)
 	 * if we lose power at any point in this sequence, the remaining
 	 * steps will be completed the next time we load the pool.
 	 */
+
 	(void) spa_vdev_exit(spa, vd, txg, 0);
+
+	/*
+	 * We can't increment a feature while holding spa_vdev so we
+	 * have to do it here, this means we land in the next TXG after
+	 * the add TXG.
+	 */
+	if (draid != 0) {
+		dmu_tx_t *tx;
+
+		tx = dmu_tx_create_assigned(spa->spa_dsl_pool, txg + 1);
+		for (c = 0; c < draid; c++)
+			spa_feature_incr(spa, SPA_FEATURE_DRAID, tx);
+
+		dmu_tx_commit(tx);
+	}
 
 	mutex_enter(&spa_namespace_lock);
 	spa_config_update(spa, SPA_CONFIG_UPDATE_POOL);
@@ -6294,6 +6299,13 @@ spa_vdev_detach(spa_t *spa, uint64_t guid, uint64_t pguid, int replace_done)
 	if (vdev_dtl_required(vd))
 		return (spa_vdev_exit(spa, NULL, txg, EBUSY));
 
+	/*
+	 * Passivate any mmp writes to the vdev. If an mmp write is hung
+	 * for too long this may return an error.
+	 */
+	if (mmp_vdev_passivate(vd))
+		return (spa_vdev_exit(spa, NULL, txg, EBUSY));
+
 	ASSERT(pvd->vdev_children >= 2);
 
 	/*
@@ -6429,6 +6441,8 @@ spa_vdev_detach(spa_t *spa, uint64_t guid, uint64_t pguid, int replace_done)
 	vdev_dirty(tvd, VDD_DTL, vd, txg);
 
 	spa_event_notify(spa, vd, NULL, ESC_ZFS_VDEV_REMOVE);
+
+	mmp_vdev_unpassivate(vd);
 
 	/* hang on to the spa before we release the lock */
 	spa_open_ref(spa, FTAG);

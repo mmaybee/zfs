@@ -1685,6 +1685,7 @@ spa_vdev_remove_cancel_sync(void *arg, dmu_tx_t *tx)
 	spa_finish_removal(spa, DSS_CANCELED, tx);
 
 	vd->vdev_removing = B_FALSE;
+	mmp_vdev_unpassivate(vd);
 	vdev_config_dirty(vd);
 
 	zfs_dbgmsg("canceled device removal for vdev %llu in %llu",
@@ -2022,6 +2023,8 @@ spa_vdev_remove_top(vdev_t *vd, uint64_t *txg)
 		return (error);
 	}
 
+	if (mmp_vdev_passivate(vd))
+		return (SET_ERROR(EBUSY));
 	vd->vdev_removing = B_TRUE;
 
 	vdev_dirty_leaves(vd, VDD_DTL, *txg);

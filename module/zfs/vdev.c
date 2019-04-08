@@ -533,6 +533,8 @@ vdev_alloc_common(spa_t *spa, uint_t id, uint64_t guid, vdev_ops_t *ops)
 	mutex_init(&vd->vdev_probe_lock, NULL, MUTEX_DEFAULT, NULL);
 	mutex_init(&vd->vdev_queue_lock, NULL, MUTEX_DEFAULT, NULL);
 	mutex_init(&vd->vdev_scan_io_queue_lock, NULL, MUTEX_DEFAULT, NULL);
+	mutex_init(&vd->vdev_mmp_lock, NULL, MUTEX_DEFAULT, NULL);
+	cv_init(&vd->vdev_mmp_wait_cv, NULL, CV_DEFAULT, NULL);
 
 	for (int t = 0; t < DTL_TYPES; t++) {
 		vd->vdev_dtl[t] = range_tree_create(NULL, NULL);
@@ -982,6 +984,8 @@ vdev_free(vdev_t *vd)
 	mutex_destroy(&vd->vdev_stat_lock);
 	mutex_destroy(&vd->vdev_probe_lock);
 	mutex_destroy(&vd->vdev_scan_io_queue_lock);
+	mutex_destroy(&vd->vdev_mmp_lock);
+	cv_destroy(&vd->vdev_mmp_wait_cv);
 
 	zfs_ratelimit_fini(&vd->vdev_delay_rl);
 	zfs_ratelimit_fini(&vd->vdev_checksum_rl);
@@ -3497,7 +3501,7 @@ vdev_offline_locked(spa_t *spa, uint64_t guid, uint64_t flags)
 	metaslab_group_t *mg;
 
 top:
-	spa_vdev_state_enter(spa, SCL_ALLOC);
+	spa_vdev_state_enter(spa, SCL_ALLOC | SCL_VDEV);
 
 	if ((vd = spa_lookup_by_guid(spa, guid, B_TRUE)) == NULL)
 		return (spa_vdev_state_exit(spa, NULL, ENODEV));
@@ -3523,6 +3527,12 @@ top:
 		 */
 		if (!tvd->vdev_islog && vd->vdev_aux == NULL &&
 		    vdev_dtl_required(vd))
+			return (spa_vdev_state_exit(spa, NULL, EBUSY));
+
+		/*
+		 * Passivate any MMP activity on the device
+		 */
+		if (mmp_vdev_passivate(vd))
 			return (spa_vdev_state_exit(spa, NULL, EBUSY));
 
 		/*
@@ -3558,6 +3568,7 @@ top:
 			 */
 			if (error || generation != spa->spa_config_generation) {
 				metaslab_group_activate(mg);
+				mmp_vdev_unpassivate(vd);
 				if (error)
 					return (spa_vdev_state_exit(spa,
 					    vd, error));
@@ -3574,6 +3585,7 @@ top:
 		 * vdev becoming unusable, undo it and fail the request.
 		 */
 		vd->vdev_offline = B_TRUE;
+		mmp_vdev_unpassivate(vd);
 		vdev_reopen(tvd);
 
 		if (!tvd->vdev_islog && vd->vdev_aux == NULL &&

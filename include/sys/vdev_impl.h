@@ -338,6 +338,7 @@ struct vdev {
 	boolean_t	vdev_isspare;	/* was a hot spare		*/
 	boolean_t	vdev_isl2cache;	/* was a l2cache device		*/
 	boolean_t	vdev_copy_uberblocks;  /* post expand copy uberblocks */
+	boolean_t	vdev_mmp_nowrites;  /* no mmp label writes to vdev */
 	vdev_queue_t	vdev_queue;	/* I/O deadline schedule queue	*/
 	vdev_cache_t	vdev_cache;	/* physical block cache		*/
 	spa_aux_vdev_t	*vdev_aux;	/* for l2cache and spares vdevs	*/
@@ -345,7 +346,9 @@ struct vdev {
 	vdev_aux_t	vdev_label_aux;	/* on-disk aux state		*/
 	uint64_t	vdev_leaf_zap;
 	hrtime_t	vdev_mmp_pending; /* 0 if write finished	*/
-	uint64_t	vdev_mmp_kstat_id;	/* to find kstat entry */
+	uint64_t	vdev_mmp_kstat_id;	 /* to find kstat entry */
+	kmutex_t	vdev_mmp_lock; /* for syncing passivate req/wait */
+	kcondvar_t	vdev_mmp_wait_cv; /* passivate cv		*/
 
 	/*
 	 * For DTrace to work in userland (libzpool) context, these fields must

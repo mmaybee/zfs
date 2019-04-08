@@ -200,6 +200,61 @@ mmp_thread_stop(spa_t *spa)
 	mmp->mmp_thread_exiting = 0;
 }
 
+/*
+ * Called to prevent any further mmp writes to a vdev and ensure any
+ * outstanding writes are completed. A note about the locking/handshaking
+ * of the mmp vdev fields.  The mmp thread will check VDEV_MMP_NOWRITES and
+ * set vdev_mmp_pending while holding the SCL_VDEV lock as reader.  On
+ * write completion, the mmp write completion function will take the
+ * vdev_mmp_lock mutex and check for vdev_mmp_nowrites.  If it is set, that
+ * means that writes have been shut off via mmp_vdev_passivate() while the
+ * current write was in progress.  The mmp_write completion thread will
+ * do a wakeup on the vdev_mmp_wait condition variable to inform the thread
+ * waiting in mmp_vdev_passivate() that it can proceed.  We expect that
+ * mmp_vdev_passivate is called with the SCL_VDEV lock held as writer.
+ * Returns non-zero if we timed out.
+ */
+int
+mmp_vdev_passivate(vdev_t * vd)
+{
+	int ret = 0;
+
+	ASSERT(spa_config_held(vd->vdev_spa, SCL_VDEV, RW_WRITER) == SCL_VDEV);
+	if (!spa_multihost(vd->vdev_spa))
+		return (ret); /* MMP not running */
+	if (!vd->vdev_ops->vdev_op_leaf)
+		return (ret); /* only leaf vdevs can get mmp writes */
+	mutex_enter(&vd->vdev_mmp_lock);
+	vd->vdev_mmp_nowrites = B_TRUE;
+	if (vd->vdev_mmp_pending) {
+		hrtime_t wake_time = gethrtime() +
+		    SEC2NSEC(zfs_multihost_fail_intervals *
+		    zfs_multihost_interval) / 2;
+
+		/*
+		 * Wait up to 1/2 of pool suspend timeout period
+		 */
+		(void) cv_timedwait_sig_hires(&vd->vdev_mmp_wait_cv,
+		    &vd->vdev_mmp_lock, wake_time, USEC2NSEC(1),
+		    CALLOUT_FLAG_ABSOLUTE);
+		if (vd->vdev_mmp_pending) {
+			vd->vdev_mmp_nowrites = B_FALSE;
+			ret = EBUSY;
+		}
+	}
+	mutex_exit(&vd->vdev_mmp_lock);
+	return (ret);
+}
+
+/*
+ * Called to undo the effects of a mmp passivate of a vdev
+ */
+void
+mmp_vdev_unpassivate(vdev_t *vd)
+{
+	vd->vdev_mmp_nowrites = B_FALSE;
+}
+
 typedef enum mmp_vdev_state_flag {
 	MMP_FAIL_NOT_WRITABLE	= (1 << 0),
 	MMP_FAIL_WRITE_PENDING	= (1 << 1),
@@ -213,7 +268,15 @@ mmp_random_leaf_impl(vdev_t *vd, int *fail_mask)
 	if (vd->vdev_ops->vdev_op_leaf) {
 		vdev_t *ret;
 
-		if (!vdev_writeable(vd)) {
+		/*
+		 * We don't choose offline, detached or draid spare devices
+		 * As they are either not legal targets or the write may
+		 * fail or not be seen buy other hosts.  Devices with
+		 * vdev_mmp_nowrites set are transitioning to an unusable state.
+		 */
+		if (!vdev_writeable(vd) || vd->vdev_offline ||
+		    vd->vdev_ops == &vdev_draid_spare_ops ||
+		    vd->vdev_detached || vd->vdev_mmp_nowrites) {
 			*fail_mask |= MMP_FAIL_NOT_WRITABLE;
 			ret = NULL;
 		} else if (vd->vdev_mmp_pending != 0) {
@@ -273,7 +336,9 @@ static int
 mmp_random_leaf(vdev_t *in_vd, vdev_t **out_vd)
 {
 	int error_mask = 0;
-	vdev_t *vd = mmp_random_leaf_impl(in_vd, &error_mask);
+	vdev_t *vd;
+
+	vd = mmp_random_leaf_impl(in_vd, &error_mask);
 
 	if (error_mask == 0)
 		*out_vd = vd;
@@ -328,11 +393,12 @@ mmp_delay_update(spa_t *spa, boolean_t write_completed)
 	 */
 	if (delay < mts->mmp_delay) {
 		hrtime_t min_delay = MSEC2NSEC(zfs_multihost_interval) /
-		    MAX(1, vdev_count_leaves(spa));
+		    MAX(1, mts->mmp_nleaves);
 		mts->mmp_delay = MAX(((delay + mts->mmp_delay * 127) / 128),
 		    min_delay);
 	}
 }
+
 
 static void
 mmp_write_done(zio_t *zio)
@@ -347,11 +413,18 @@ mmp_write_done(zio_t *zio)
 
 	mmp_delay_update(spa, (zio->io_error == 0));
 
+	mutex_enter(&vd->vdev_mmp_lock);
 	vd->vdev_mmp_pending = 0;
+	/*
+	 * If vdev_mmp_nowrites is set, someone set it after we started the
+	 * write now completing, and they are waiting for it to finish.
+	 * Wake them up as the vdev is now passivated WRT to mmp writes.
+	 */
+	if (vd->vdev_mmp_nowrites)
+		cv_signal(&vd->vdev_mmp_wait_cv);
 	vd->vdev_mmp_kstat_id = 0;
-
+	mutex_exit(&vd->vdev_mmp_lock);
 	mutex_exit(&mts->mmp_io_lock);
-	spa_config_exit(spa, SCL_STATE, mmp_tag);
 
 	spa_mmp_history_set(spa, mmp_kstat_id, zio->io_error,
 	    mmp_write_duration);
@@ -370,10 +443,28 @@ mmp_update_uberblock(spa_t *spa, uberblock_t *ub)
 	mmp_thread_t *mmp = &spa->spa_mmp;
 
 	mutex_enter(&mmp->mmp_io_lock);
+	mmp->mmp_nleaves = MAX(1, vdev_count_leaves(spa));
 	mmp->mmp_ub = *ub;
 	mmp->mmp_ub.ub_timestamp = gethrestime_sec();
 	mmp_delay_update(spa, B_TRUE);
 	mutex_exit(&mmp->mmp_io_lock);
+}
+
+void
+mmp_label_write(zio_t *zio, vdev_t *vd, int l, abd_t *buf, uint64_t offset,
+    uint64_t size, zio_done_func_t *done, void *private, int flags)
+{
+	zio_t *pzio;
+
+	ASSERT(spa_config_held(zio->io_spa, SCL_VDEV, RW_READER) == SCL_VDEV);
+	ASSERT(flags & ZIO_FLAG_CONFIG_WRITER);
+
+	pzio = zio_write_phys(zio, vd,
+	    vdev_label_offset(vd->vdev_psize, l, offset),
+	    size, buf, ZIO_CHECKSUM_LABEL, done, private,
+	    ZIO_PRIORITY_SYNC_WRITE, flags, B_TRUE);
+	spa_config_exit(zio->io_spa, SCL_VDEV, mmp_tag);
+	zio_nowait(pzio);
 }
 
 /*
@@ -391,16 +482,11 @@ mmp_write_uberblock(spa_t *spa)
 	int label, error;
 	uint64_t offset;
 
-	hrtime_t lock_acquire_time = gethrtime();
-	spa_config_enter(spa, SCL_STATE, mmp_tag, RW_READER);
-	lock_acquire_time = gethrtime() - lock_acquire_time;
-	if (lock_acquire_time > (MSEC2NSEC(MMP_MIN_INTERVAL) / 10))
-		zfs_dbgmsg("SCL_STATE acquisition took %llu ns\n",
-		    (u_longlong_t)lock_acquire_time);
-
-	error = mmp_random_leaf(spa->spa_root_vdev, &vd);
-
 	mutex_enter(&mmp->mmp_io_lock);
+	spa_config_enter(spa, SCL_VDEV, mmp_tag, RW_READER);
+	error = mmp_random_leaf(spa->spa_root_vdev, &vd);
+	mmp->mmp_nleaves = MAX(1, vdev_count_leaves(spa));
+
 
 	/*
 	 * spa_mmp_history has two types of entries:
@@ -411,6 +497,7 @@ mmp_write_uberblock(spa_t *spa)
 	 */
 
 	if (error) {
+		spa_config_exit(spa, SCL_VDEV, mmp_tag);
 		mmp_delay_update(spa, B_FALSE);
 		if (mmp->mmp_skip_error == error) {
 			spa_mmp_history_set_skip(spa, mmp->mmp_kstat_id - 1);
@@ -421,7 +508,6 @@ mmp_write_uberblock(spa_t *spa)
 			    mmp->mmp_kstat_id++, error);
 		}
 		mutex_exit(&mmp->mmp_io_lock);
-		spa_config_exit(spa, SCL_STATE, FTAG);
 		return;
 	}
 
@@ -435,6 +521,10 @@ mmp_write_uberblock(spa_t *spa)
 	ub->ub_timestamp = gethrestime_sec();
 	ub->ub_mmp_magic = MMP_MAGIC;
 	ub->ub_mmp_delay = mmp->mmp_delay;
+	/*
+	 * Set of pending here is protected from mmp_vdev_passivate by
+	 * holding SCL_VDEV as reader so we don't need vdev_mmp_lock.
+	 */
 	vd->vdev_mmp_pending = gethrtime();
 	vd->vdev_mmp_kstat_id = mmp->mmp_kstat_id;
 
@@ -450,7 +540,7 @@ mmp_write_uberblock(spa_t *spa)
 	    MMP_BLOCKS_PER_LABEL + spa_get_random(MMP_BLOCKS_PER_LABEL));
 
 	label = spa_get_random(VDEV_LABELS);
-	vdev_label_write(zio, vd, label, ub_abd, offset,
+	mmp_label_write(zio, vd, label, ub_abd, offset,
 	    VDEV_UBERBLOCK_SIZE(vd), mmp_write_done, mmp,
 	    flags | ZIO_FLAG_DONT_PROPAGATE);
 
@@ -479,10 +569,10 @@ mmp_thread(void *arg)
 	 * For the first mmp write, there is no "last write", so we start
 	 * with fake, but reasonable, default non-zero values.
 	 */
+	mmp->mmp_nleaves = MAX(vdev_count_leaves(spa), 1);
 	mmp->mmp_delay = MSEC2NSEC(MAX(zfs_multihost_interval,
-	    MMP_MIN_INTERVAL)) / MAX(vdev_count_leaves(spa), 1);
+	    MMP_MIN_INTERVAL)) / mmp->mmp_nleaves;
 	mmp->mmp_last_write = gethrtime() - mmp->mmp_delay;
-
 	while (!mmp->mmp_thread_exiting) {
 		uint64_t mmp_fail_intervals = zfs_multihost_fail_intervals;
 		uint64_t mmp_interval = MSEC2NSEC(

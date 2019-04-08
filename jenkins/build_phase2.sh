@@ -17,6 +17,11 @@ SCM_URL=${JP_SCM_URL:-http://es-gerrit.dev.cray.com/zfs}
 VERS_BASE=${JP_VERS_BASE:-x3.2}
 BUILD_NUMBER=${BUILD_NUMBER:-1}
 WORKSPACE=${WORKSPACE:-$(pwd)}
+DEBUGOPT=""
+if [ "$1" == "DEBUG" ] ; then
+	echo "building DEBUG ZFS version"
+	DEBUGOPT="--enable-debug"
+fi
 
 RELEASE_ID=$VERS_BASE
 
@@ -64,7 +69,7 @@ if [ "\$rval" != "0" ] ; then
 fi
 
 # Configure
-./configure --with-spec=redhat
+./configure --with-spec=redhat ${DEBUGOPT}
 rval=\$?
 if [ "\$rval" != "0" ] ; then
 	exit \$rval

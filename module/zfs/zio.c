@@ -763,7 +763,9 @@ zio_create(zio_t *pio, spa_t *spa, uint64_t txg, const blkptr_t *bp,
 	ASSERT(P2PHASE(psize, SPA_MINBLOCKSIZE) == 0);
 	ASSERT(P2PHASE(offset, SPA_MINBLOCKSIZE) == 0);
 
-	ASSERT(!vd || spa_config_held(spa, SCL_STATE_ALL, RW_READER));
+	ASSERT(!vd || spa_config_held(spa, SCL_STATE_ALL, RW_READER) ||
+	    ((flags & ZIO_FLAG_PHYSICAL) &&
+		spa_config_held(spa, SCL_VDEV, RW_READER)));
 	ASSERT(!bp || !(flags & ZIO_FLAG_CONFIG_WRITER));
 	ASSERT(vd || stage == ZIO_STAGE_OPEN);
 
@@ -3775,7 +3777,8 @@ zio_vdev_io_done(zio_t *zio)
 
 	ops->vdev_op_io_done(zio);
 
-	if (unexpected_error)
+	if (unexpected_error &&
+	    spa_config_held(vd->vdev_spa, SCL_STATE_ALL, RW_READER))
 		VERIFY(vdev_probe(vd, zio) == NULL);
 
 	return (zio);
