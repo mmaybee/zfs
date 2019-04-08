@@ -3600,7 +3600,6 @@ metaslab_free_concrete(vdev_t *vd, uint64_t offset, uint64_t asize,
 	msp = vd->vdev_ms[offset >> vd->vdev_ms_shift];
 
 	VERIFY(!msp->ms_condensing);
-	VERIFY(!msp->ms_rebuilding);
 	VERIFY3U(offset, >=, msp->ms_start);
 	VERIFY3U(offset + asize, <=, msp->ms_start + msp->ms_size);
 	VERIFY0(P2PHASE(offset, 1ULL << vd->vdev_ashift));
