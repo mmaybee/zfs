@@ -15,7 +15,7 @@ REPO=${JP_REPO:-zfs}
 PROJECT=${JP_NEO_RELEASE:-NEO3.X}
 SCM_URL=${JP_SCM_URL:-http://es-gerrit.dev.cray.com/zfs}
 VERS_BASE=${JP_VERS_BASE:-x3.2}
-BUILD_NUMBER=${BUILD_NUMBER:-1}
+BUILD_NUMBER=${BUILD_NUMBER:-dev}
 WORKSPACE=${WORKSPACE:-$(pwd)}
 DEBUGOPT=""
 if [ "$1" == "DEBUG" ] ; then
@@ -23,7 +23,8 @@ if [ "$1" == "DEBUG" ] ; then
 	DEBUGOPT="--enable-debug"
 fi
 
-RELEASE_ID=$VERS_BASE
+GIT_VER=$(git rev-list --max-count=1 HEAD | cut -c1-8)
+RELEASE_ID=${VERS_BASE}_${BUILD_NUMBER}_g${GIT_VER}
 
 mv META META.default
 echo "Meta: 1" > META
@@ -60,6 +61,7 @@ fi
 # Build the rpms in the chroot environment
 cat << EOF | ${MOCK} shell
 cd /build/zfs
+echo nogitrelease > .nogitrelease
 
 # Autogen
 sh ./autogen.sh
@@ -82,6 +84,7 @@ rval=\$?
 mkdir RPMBUILD
 mv *.rpm RPMBUILD
 
+rm -f .nogitrelease
 exit \$rval
 EOF
 if [ "$?" != 0 ] ; then
