@@ -98,14 +98,14 @@ function setup_testenv #[dtst]
 #
 function cleanup_testenv
 {
+	pkill mkbusy
+
 	if is_global_zone && ismounted "$TESTDIR1" "$NEWFS_DEFAULT_FS" ; then
 		log_must umount -f $TESTDIR1
 	fi
 	if [[ -d $TESTDIR1 ]]; then
 		log_must rm -rf $TESTDIR1
 	fi
-
-	pkill mkbusy
 
 	if datasetexists $CTR; then
 		log_must zfs destroy -Rf $CTR
