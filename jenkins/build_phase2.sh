@@ -58,8 +58,8 @@ if [ "$?" != 0 ] ; then
 	exit -1
 fi
 
-# Build the rpms in the chroot environment
-cat << EOF | ${MOCK} shell
+# Generate a script to build the rpms in the chroot environment
+cat << EOF > buildrpms.sh
 cd /build/zfs
 echo nogitrelease > .nogitrelease
 
@@ -87,6 +87,12 @@ mv *.rpm RPMBUILD
 rm -f .nogitrelease
 exit \$rval
 EOF
+chmod +x ./buildrpms.sh
+# Copy the script into the Mock environment and build the RPMS
+${MOCK} --copyin ./buildrpms.sh /build/zfs
+rm -f ./buildrpms.sh
+${MOCK} --chroot /build/zfs/buildrpms.sh
+
 if [ "$?" != 0 ] ; then
 	echo "BUILD FAILED"
 	exit -1

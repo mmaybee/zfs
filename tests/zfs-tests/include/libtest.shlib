@@ -538,10 +538,13 @@ function default_cleanup_noexit
 	#
 	if is_global_zone; then
 		zfs unmount -a > /dev/null 2>&1
-		ALL_POOLS=$(get_all_pools)
+		ALL_POOLS=$(get_all_pools | sort -r)
 		# Here, we loop through the pools we're allowed to
 		# destroy, only destroying them if it's safe to do
-		# so.
+		# so.  We loop through in reverse order because tests
+		# create testpool, testpool1, etc. and sometimes the
+		# later pools are subpools so it's more efficient to
+		# destroy them first rather than re-looping.
 		while [ ! -z ${ALL_POOLS} ]
 		do
 			for pool in ${ALL_POOLS}
@@ -550,8 +553,8 @@ function default_cleanup_noexit
 				then
 					destroy_pool $pool
 				fi
-				ALL_POOLS=$(get_all_pools)
 			done
+			ALL_POOLS=$(get_all_pools | sort -r)
 		done
 
 		zfs mount -a
@@ -2465,7 +2468,7 @@ function safe_to_destroy_pool { # $1 the pool name
 			awk '{print $1}')
 
 		# this is a list of the zvols that make up the pool
-		ZVOLPOOL=$(zpool status -v $pool | grep "$ZVOL_DEVDIR/$1$" \
+		ZVOLPOOL=$(zpool status -vP $pool | grep "$ZVOL_DEVDIR/$1$" \
 		    | awk '{print $1}')
 
 		# also want to determine if it's a file-based pool using an
