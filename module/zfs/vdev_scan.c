@@ -573,7 +573,7 @@ spa_vdev_scan_sync_state(spa_vdev_scan_t *svs, dmu_tx_t *tx)
 	    &svs->svs_phys, tx));
 }
 
-#if defined(_KERNEL) && defined(HAVE_SPL)
+#if defined(_KERNEL)
 module_param(spa_vdev_scan_delay, int, 0644);
 MODULE_PARM_DESC(spa_vdev_scan_delay, "Number of ticks to delay SPA rebuild");
 
