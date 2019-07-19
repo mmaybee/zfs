@@ -457,7 +457,6 @@ mmp_label_write(zio_t *zio, vdev_t *vd, int l, abd_t *buf, uint64_t offset,
 	zio_t *pzio;
 
 	ASSERT(spa_config_held(zio->io_spa, SCL_VDEV, RW_READER) == SCL_VDEV);
-	ASSERT(flags & ZIO_FLAG_CONFIG_WRITER);
 
 	pzio = zio_write_phys(zio, vd,
 	    vdev_label_offset(vd->vdev_psize, l, offset),
@@ -475,7 +474,7 @@ mmp_label_write(zio_t *zio, vdev_t *vd, int l, abd_t *buf, uint64_t offset,
 static void
 mmp_write_uberblock(spa_t *spa)
 {
-	int flags = ZIO_FLAG_CONFIG_WRITER | ZIO_FLAG_CANFAIL;
+	int flags = ZIO_FLAG_CANFAIL;
 	mmp_thread_t *mmp = &spa->spa_mmp;
 	uberblock_t *ub;
 	vdev_t *vd = NULL;
