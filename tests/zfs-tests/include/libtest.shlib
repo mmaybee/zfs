@@ -3310,9 +3310,7 @@ function zed_start
 	# Verify the ZED is not already running.
 	pgrep -x zed > /dev/null
 	if (($? == 0)); then
-		#log_fail "ZED already running"
 		log_note "ZED already running"
-	#fi
 	else
 		log_note "Starting ZED"
 		# run ZED in the background and redirect foreground logging
