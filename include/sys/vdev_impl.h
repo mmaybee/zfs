@@ -542,7 +542,7 @@ typedef struct mirror_map {
 	int		*mm_preferred;
 	int		mm_preferred_cnt;
 	int		mm_children;
-	boolean_t	mm_replacing;
+	boolean_t	mm_resilvering;
 	boolean_t	mm_root;
 	mirror_child_t	mm_child[];
 } mirror_map_t;

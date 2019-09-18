@@ -1461,8 +1461,8 @@ metaslab_df_alloc(metaslab_t *msp, uint64_t size)
 	    free_pct < metaslab_df_free_pct) {
 		offset = -1;
 	} else {
-		offset = metaslab_block_picker(&rt->rt_root,
-		    cursor, size, metaslab_df_max_search);
+		offset = metaslab_block_picker(msp, &rt->rt_root,
+		    cursor, size, metaslab_df_max_search, align);
 	}
 
 	if (offset == -1) {
@@ -2622,30 +2622,6 @@ metaslab_set_fragmentation(metaslab_t *msp, boolean_t nodirty)
 	ASSERT3U(fragmentation, <=, 100);
 
 	msp->ms_fragmentation = fragmentation;
-}
-
-/*
- * dRAID metaslabs start at a certain alignment, which causes their sizes to
- * vary by a few sectors. The block allocator may get confused and pick a
- * distant metaslab because the closer ones are slightly smaller. The small
- * variance doesn't matter when the metaslab has already been allocated from.
- *
- * This function returns adjusted size to calculate metaslab weight, and
- * should not be used for other purposes.
- */
-static uint64_t
-metaslab_weight_size(metaslab_t *msp)
-{
-	vdev_t *vd = msp->ms_group->mg_vd;
-	uint64_t size;
-
-	if (vd->vdev_ops != &vdev_draid_ops ||
-	    space_map_allocated(msp->ms_sm) != 0)
-		return (msp->ms_size);
-
-	size = 1ULL << vd->vdev_ms_shift;
-	ASSERT3U(size, >=, msp->ms_size);
-	return (size);
 }
 
 /*

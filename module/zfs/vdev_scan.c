@@ -350,7 +350,6 @@ spa_vdev_scan_thread(void *arg)
 			    spa->spa_dsl_pool->dp_meta_objset,
 			    msp->ms_sm->sm_object, msp->ms_sm->sm_start,
 			    msp->ms_sm->sm_size, msp->ms_sm->sm_shift));
-			space_map_update(sm);
 			VERIFY0(space_map_load(sm, allocd_segs, SM_ALLOC));
 			space_map_close(sm);
 		}

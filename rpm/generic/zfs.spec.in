@@ -428,6 +428,7 @@ systemctl --system daemon-reload >/dev/null || true
 %{_bindir}/arc_summary
 %{_bindir}/arcstat
 %{_bindir}/dbufstat
+%{_bindir}/draidcfg
 # Man pages
 %{_mandir}/man1/*
 %{_mandir}/man5/*

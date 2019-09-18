@@ -334,7 +334,7 @@ vdev_draid_mirror_map_alloc(zio_t *zio, uint64_t unit_shift,
 static inline void
 vdev_draid_assert_vd(const vdev_t *vd)
 {
-	struct vdev_draid_configuration *cfg = vd->vdev_tsd;
+	ASSERTV(struct vdev_draid_configuration *cfg = vd->vdev_tsd);
 
 	ASSERT3P(vd->vdev_ops, ==, &vdev_draid_ops);
 	ASSERT(cfg != NULL);
@@ -617,7 +617,7 @@ vdev_draid_group_degraded(vdev_t *vd, vdev_t *oldvd,
     uint64_t offset, uint64_t size, boolean_t mirror)
 {
 	uint64_t ashift = vd->vdev_top->vdev_ashift;
-	uint64_t group = vdev_draid_offset2group(vd, offset, mirror);
+	ASSERTV(uint64_t group = vdev_draid_offset2group(vd, offset, mirror));
 	struct vdev_draid_configuration *cfg = vd->vdev_tsd;
 	boolean_t degraded = B_FALSE;
 	zio_t *zio;
@@ -1287,6 +1287,7 @@ vdev_ops_t vdev_draid_ops = {
 	NULL,
 	NULL,
 	NULL,
+	NULL,
 	VDEV_TYPE_DRAID,	/* name of this vdev type */
 	B_FALSE			/* not a leaf vdev */
 };
@@ -1534,6 +1535,7 @@ vdev_ops_t vdev_draid_spare_ops = {
 	vdev_dspare_asize,
 	vdev_dspare_io_start,
 	vdev_dspare_io_done,
+	NULL,
 	NULL,
 	NULL,
 	NULL,
