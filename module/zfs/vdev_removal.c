@@ -1836,11 +1836,11 @@ vdev_remove_make_hole_and_free(vdev_t *vd)
 	vdev_free(vd);
 
 	if (last_vdev) {
-                vdev_compact_children(rvd);
-        } else {
-                vd = vdev_alloc_common(spa, id, 0, &vdev_hole_ops);
-                vdev_add_child(rvd, vd);
-        }
+		vdev_compact_children(rvd);
+	} else {
+		vd = vdev_alloc_common(spa, id, 0, &vdev_hole_ops);
+		vdev_add_child(rvd, vd);
+	}
         vdev_config_dirty(rvd);
 
 	/*
