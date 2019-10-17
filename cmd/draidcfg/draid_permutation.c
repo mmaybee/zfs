@@ -153,9 +153,7 @@ check_map(map_t *map)
 	memset(brokencounts, 0, sizeof (int) * map->ndevs);
 
 	for (i = 0; i < map->nbroken; i++) {
-		int dev = map->broken[i];
-
-		ASSERT(0 <= dev && dev < map->ndevs); /* valid drive */
+		ASSERT(0 <= map->broken[i] && map->broken[i] < map->ndevs); /* valid drive */
 		ASSERT(brokencounts[i] == 0); /* not used already */
 		brokencounts[i] = 1;
 	}
@@ -354,7 +352,7 @@ eval_decluster(map_t *map, int how, int faults, int print)
 	long sum = 0;
 	long sumsq = 0;
 	long max_ios = 0;
-	double val;
+	double val = 0;
 
 	ASSERT(eval_resilver(map, 0) == 0); /* not broken already */
 	ASSERT(faults == 1 || faults == 2);

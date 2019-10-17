@@ -1287,6 +1287,7 @@ vdev_ops_t vdev_draid_ops = {
 	NULL,
 	NULL,
 	NULL,
+	NULL,
 	VDEV_TYPE_DRAID,	/* name of this vdev type */
 	B_FALSE			/* not a leaf vdev */
 };
@@ -1534,6 +1535,7 @@ vdev_ops_t vdev_draid_spare_ops = {
 	vdev_dspare_asize,
 	vdev_dspare_io_start,
 	vdev_dspare_io_done,
+	NULL,
 	NULL,
 	NULL,
 	NULL,
