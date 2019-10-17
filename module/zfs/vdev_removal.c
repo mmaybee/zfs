@@ -1828,15 +1828,20 @@ vdev_remove_make_hole_and_free(vdev_t *vd)
 	uint64_t id = vd->vdev_id;
 	spa_t *spa = vd->vdev_spa;
 	vdev_t *rvd = spa->spa_root_vdev;
+	boolean_t last_vdev = (id == (rvd->vdev_children - 1));
 
 	ASSERT(MUTEX_HELD(&spa_namespace_lock));
 	ASSERT(spa_config_held(spa, SCL_ALL, RW_WRITER) == SCL_ALL);
 
 	vdev_free(vd);
 
-	vd = vdev_alloc_common(spa, id, 0, &vdev_hole_ops);
-	vdev_add_child(rvd, vd);
-	vdev_config_dirty(rvd);
+	if (last_vdev) {
+                vdev_compact_children(rvd);
+        } else {
+                vd = vdev_alloc_common(spa, id, 0, &vdev_hole_ops);
+                vdev_add_child(rvd, vd);
+        }
+        vdev_config_dirty(rvd);
 
 	/*
 	 * Reassess the health of our root vdev.

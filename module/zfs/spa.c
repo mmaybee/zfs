@@ -6553,7 +6553,7 @@ spa_vdev_add(spa_t *spa, nvlist_t *nvroot)
 		}
 		tvd = vd->vdev_child[c];
 		vdev_remove_child(vd, tvd);
-		tvd->vdev_id = rvd->vdev_children;
+		tvd->vdev_id = id;
 		vdev_add_child(rvd, tvd);
 		vdev_config_dirty(tvd);
 
