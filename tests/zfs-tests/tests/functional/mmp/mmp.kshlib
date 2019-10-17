@@ -125,7 +125,10 @@ function mmp_pool_create # pool dir
 	log_note "Starting ztest in the background as hostid $HOSTID1"
 	log_must eval "ZFS_HOSTID=$HOSTID1 ztest $opts >$MMP_ZTEST_LOG 2>&1 &"
 
+	log_must sleep 30
+
 	while ! is_pool_imported "$pool" "-d $dir"; do
+		log_must sleep 5
 		log_must pgrep ztest
 		log_must sleep 5
 	done
