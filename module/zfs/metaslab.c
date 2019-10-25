@@ -1406,9 +1406,6 @@ metaslab_ff_alloc(metaslab_t *msp, uint64_t size)
 	avl_tree_t *t = &msp->ms_allocatable->rt_root;
 
 	return (metaslab_block_picker(msp, t, cursor, size, align));
-=======
-	return (-1ULL);
->>>>>>> 185021f76b5ef195cee213ef29d624a547fb0945
 }
 #endif /* WITH_DF/CF_BLOCK_ALLOCATOR */
 
