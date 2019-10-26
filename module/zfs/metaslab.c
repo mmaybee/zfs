@@ -2347,6 +2347,14 @@ metaslab_init(metaslab_group_t *mg, uint64_t id, uint64_t object,
 	ms->ms_allocator = -1;
 	ms->ms_new = B_TRUE;
 
+	if (vd->vdev_ops == &vdev_draid_ops) {
+		uint64_t astart = vdev_draid_get_astart(vd, ms->ms_start);
+
+		ASSERT3U(astart - ms->ms_start, <, ms->ms_size);
+		ms->ms_size -= astart - ms->ms_start;
+		ms->ms_start = astart;
+	}
+
 	/*
 	 * We only open space map objects that already exist. All others
 	 * will be opened when we finally allocate an object for it.
