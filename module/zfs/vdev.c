@@ -349,28 +349,14 @@ vdev_lookup_by_guid(vdev_t *vd, uint64_t guid)
 	return (NULL);
 }
 
-static int
-vdev_count_leaves_impl(vdev_t *vd)
-{
-	int n = 0;
-
-	if (vd->vdev_ops->vdev_op_leaf)
-		return (1);
-
-	for (int c = 0; c < vd->vdev_children; c++)
-		n += vdev_count_leaves_impl(vd->vdev_child[c]);
-
-	return (n);
-}
-
 int
 vdev_count_leaves(spa_t *spa)
 {
 	int rc;
 
-	spa_config_enter(spa, SCL_VDEV, FTAG, RW_READER);
-	rc = vdev_count_leaves_impl(spa->spa_root_vdev);
-	spa_config_exit(spa, SCL_VDEV, FTAG);
+	mutex_enter(&spa->spa_leaf_list_lock);
+	rc = spa->spa_leaf_cnt;
+	mutex_exit(&spa->spa_leaf_list_lock);
 
 	return (rc);
 }
@@ -415,8 +401,11 @@ vdev_add_child(vdev_t *pvd, vdev_t *cvd)
 		pvd->vdev_guid_sum += cvd->vdev_guid_sum;
 
 	if (cvd->vdev_ops->vdev_op_leaf) {
+		mutex_enter(&cvd->vdev_spa->spa_leaf_list_lock);
 		list_insert_head(&cvd->vdev_spa->spa_leaf_list, cvd);
+		cvd->vdev_spa->spa_leaf_cnt++;
 		cvd->vdev_spa->spa_leaf_list_gen++;
+		mutex_exit(&cvd->vdev_spa->spa_leaf_list_lock);
 	}
 }
 
@@ -449,8 +438,11 @@ vdev_remove_child(vdev_t *pvd, vdev_t *cvd)
 
 	if (cvd->vdev_ops->vdev_op_leaf) {
 		spa_t *spa = cvd->vdev_spa;
+		mutex_enter(&spa->spa_leaf_list_lock);
 		list_remove(&spa->spa_leaf_list, cvd);
+		spa->spa_leaf_cnt--;
 		spa->spa_leaf_list_gen++;
+		mutex_exit(&spa->spa_leaf_list_lock);
 	}
 
 	/*
@@ -1035,9 +1027,9 @@ vdev_free(vdev_t *vd)
 	mutex_destroy(&vd->vdev_probe_lock);
 	mutex_destroy(&vd->vdev_scan_io_queue_lock);
 	mutex_destroy(&vd->vdev_mmp_lock);
-	cv_destroy(&vd->vdev_mmp_wait_cv);
 	mutex_destroy(&vd->vdev_initialize_lock);
 	mutex_destroy(&vd->vdev_initialize_io_lock);
+	cv_destroy(&vd->vdev_mmp_wait_cv);
 	cv_destroy(&vd->vdev_initialize_io_cv);
 	cv_destroy(&vd->vdev_initialize_cv);
 	mutex_destroy(&vd->vdev_trim_lock);

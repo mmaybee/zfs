@@ -275,7 +275,7 @@ mmp_thread_stop(spa_t *spa)
 /*
  * Called to prevent any further mmp writes to a vdev and ensure any
  * outstanding writes are completed. A note about the locking/handshaking
- * of the mmp vdev fields.  The mmp thread will check VDEV_MMP_NOWRITES and
+ * of the mmp vdev fields.  The mmp thread will check vdev_mmp_nowrites and
  * set vdev_mmp_pending while holding the SCL_VDEV lock as reader.  On
  * write completion, the mmp write completion function will take the
  * vdev_mmp_lock mutex and check for vdev_mmp_nowrites.  If it is set, that
@@ -287,7 +287,7 @@ mmp_thread_stop(spa_t *spa)
  * Returns non-zero if we timed out.
  */
 int
-mmp_vdev_passivate(vdev_t * vd)
+mmp_vdev_passivate(vdev_t *vd)
 {
 	int ret = 0;
 
@@ -300,7 +300,7 @@ mmp_vdev_passivate(vdev_t * vd)
 	vd->vdev_mmp_nowrites = B_TRUE;
 	if (vd->vdev_mmp_pending) {
 		hrtime_t wake_time = gethrtime() +
-		    SEC2NSEC(zfs_multihost_fail_intervals *
+		    MSEC2NSEC(zfs_multihost_fail_intervals *
 		    zfs_multihost_interval) / 2;
 
 		/*
@@ -351,7 +351,7 @@ mmp_next_leaf(spa_t *spa)
 	int fail_mask = 0;
 
 	ASSERT(MUTEX_HELD(&spa->spa_mmp.mmp_io_lock));
-	ASSERT(spa_config_held(spa, SCL_VDEV, RW_READER));
+	mutex_enter(&spa->spa_leaf_list_lock);
 	ASSERT(list_link_active(&spa->spa_leaf_list.list_head) == B_TRUE);
 	ASSERT(!list_is_empty(&spa->spa_leaf_list));
 
@@ -370,15 +370,24 @@ mmp_next_leaf(spa_t *spa)
 		if (leaf == NULL)
 			leaf = list_head(&spa->spa_leaf_list);
 
-		if (!vdev_writeable(leaf)) {
+		/*
+		 * We don't choose offline or detached devices
+		 * As they are either not legal targets or the write may
+		 * fail or not be seen buy other hosts.  Devices with
+		 * vdev_mmp_nowrites set are transitioning to an unusable state.
+		 */
+		if (!vdev_writeable(leaf) || leaf->vdev_offline ||
+		    leaf->vdev_detached || leaf->vdev_mmp_nowrites) {
 			fail_mask |= MMP_FAIL_NOT_WRITABLE;
 		} else if (leaf->vdev_mmp_pending != 0) {
 			fail_mask |= MMP_FAIL_WRITE_PENDING;
 		} else {
 			spa->spa_mmp.mmp_last_leaf = leaf;
+			mutex_exit(&spa->spa_leaf_list_lock);
 			return (0);
 		}
 	} while (leaf != starting_leaf);
+	mutex_exit(&spa->spa_leaf_list_lock);
 
 	ASSERT(fail_mask);
 
@@ -507,9 +516,9 @@ mmp_label_write(zio_t *zio, vdev_t *vd, int l, abd_t *buf, uint64_t offset,
 }
 
 /*
- * Choose a random vdev, label, and MMP block, and write over it
- * with a copy of the last-synced uberblock, whose timestamp
- * has been updated to reflect that the pool is in use.
+ * Choose the next vdev in round robin fashion, and a random label, and
+ * MMP block, and write over it with a copy of the last-synced uberblock,
+ * whose timestamp has been updated to reflect that the pool is in use.
  */
 static void
 mmp_write_uberblock(spa_t *spa)
@@ -523,7 +532,6 @@ mmp_write_uberblock(spa_t *spa)
 
 	mutex_enter(&mmp->mmp_io_lock);
 	spa_config_enter(spa, SCL_VDEV, mmp_tag, RW_READER);
-
 	error = mmp_next_leaf(spa);
 	mmp->mmp_nleaves = MAX(1, vdev_count_leaves(spa));
 
@@ -550,7 +558,6 @@ mmp_write_uberblock(spa_t *spa)
 			    gethrtime(), error);
 		}
 		mutex_exit(&mmp->mmp_io_lock);
-
 		return;
 	}
 
@@ -587,7 +594,10 @@ mmp_write_uberblock(spa_t *spa)
 	    MMP_INTERVAL_SET(MMP_INTERVAL_OK(zfs_multihost_interval)) |
 	    MMP_FAIL_INT_SET(MMP_FAIL_INTVS_OK(
 	    zfs_multihost_fail_intervals));
-
+	/*
+	 * Set of pending here is protected from mmp_vdev_passivate by
+	 * holding SCL_VDEV as reader so we don't need vdev_mmp_lock.
+	 */
 	vd->vdev_mmp_pending = gethrtime();
 	vd->vdev_mmp_kstat_id = mmp->mmp_kstat_id;
 

@@ -776,7 +776,7 @@ zio_create(zio_t *pio, spa_t *spa, uint64_t txg, const blkptr_t *bp,
 
 	ASSERT(!vd || spa_config_held(spa, SCL_STATE_ALL, RW_READER) ||
 	    ((flags & ZIO_FLAG_PHYSICAL) &&
-		spa_config_held(spa, SCL_VDEV, RW_READER)));
+	    spa_config_held(spa, SCL_VDEV, RW_READER)));
 	ASSERT(!bp || !(flags & ZIO_FLAG_CONFIG_WRITER));
 	ASSERT(vd || stage == ZIO_STAGE_OPEN);
 
@@ -3708,7 +3708,7 @@ zio_vdev_io_start(zio_t *zio)
 	if (vd->vdev_ops->vdev_op_leaf &&
 	    vd->vdev_ops != &vdev_draid_spare_ops &&
 	    (zio->io_type == ZIO_TYPE_READ || zio->io_type == ZIO_TYPE_WRITE ||
-	     zio->io_type == ZIO_TYPE_TRIM)) {
+	    zio->io_type == ZIO_TYPE_TRIM)) {
 
 		if (zio->io_type == ZIO_TYPE_READ && vdev_cache_read(zio))
 			return (zio);

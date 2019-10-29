@@ -412,6 +412,8 @@ struct spa {
 	taskq_t		*spa_prefetch_taskq;	/* Taskq for prefetch threads */
 	uint64_t	spa_multihost;		/* multihost aware (mmp) */
 	mmp_thread_t	spa_mmp;		/* multihost mmp thread */
+	kmutex_t	spa_leaf_list_lock;	/* protects leaf list fields */
+	uint64_t	spa_leaf_cnt;		/* number of leaves in spa */
 	list_t		spa_leaf_list;		/* list of leaf vdevs */
 	uint64_t	spa_leaf_list_gen;	/* track leaf_list changes */
 	uint32_t	spa_hostid;		/* cached system hostid */

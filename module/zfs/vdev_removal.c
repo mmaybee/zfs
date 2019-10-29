@@ -1842,7 +1842,7 @@ vdev_remove_make_hole_and_free(vdev_t *vd)
 		vd = vdev_alloc_common(spa, id, 0, &vdev_hole_ops);
 		vdev_add_child(rvd, vd);
 	}
-        vdev_config_dirty(rvd);
+	vdev_config_dirty(rvd);
 
 	/*
 	 * Reassess the health of our root vdev.
@@ -1894,6 +1894,8 @@ spa_vdev_remove_log(vdev_t *vd, uint64_t *txg)
 	}
 	ASSERT0(vd->vdev_stat.vs_alloc);
 
+	if (mmp_vdev_passivate(vd))
+		return (SET_ERROR(EBUSY));
 	/*
 	 * The evacuation succeeded.  Remove any remaining MOS metadata
 	 * associated with this vdev, and wait for these changes to sync.
