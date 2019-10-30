@@ -44,7 +44,7 @@ if [ "$?" != 0 ] ; then
 fi
 
 # Install needed packages not already provided by the config
-${MOCK} --install autoconf automake libtool zlib-devel libuuid-devel libblkid-devel openssl-devel kernel-devel rpm-build systemd-devel libattr-devel libaio-devel libffi-devel git
+${MOCK} --install autoconf automake libtool zlib-devel libuuid-devel libblkid-devel openssl-devel kernel-devel rpm-build systemd-devel libattr-devel libaio-devel libffi-devel git python2-devel python-cffi python-setuptools
 if [ "$?" != 0 ] ; then
 	echo "BUILD FAILED"
 	exit -1
