@@ -398,7 +398,7 @@ get_usage(zpool_help_t idx)
 		    "[<device> ...]\n"));
 	case HELP_STATUS:
 		return (gettext("\tstatus [-c [script1,script2,...]] "
-		    "[-igLpPstvxD]  [-T d|u] [pool] ... \n"
+		    "[-igLpPjstvxD]  [-T d|u] [pool] ... \n"
 		    "\t    [interval [count]]\n"));
 	case HELP_UPGRADE:
 		return (gettext("\tupgrade\n"
@@ -7890,7 +7890,7 @@ status_callback(zpool_handle_t *zhp, void *data)
 }
 
 /*
- * zpool status [-c [script1,script2,...]] [-igLpPstvx] [-T d|u] [pool] ...
+ * zpool status [-c [script1,script2,...]] [-igjLpPstvx] [-T d|u] [pool] ...
  *              [interval [count]]
  *
  *	-c CMD	For each vdev, run command CMD
@@ -7920,7 +7920,7 @@ zpool_do_status(int argc, char **argv)
 	char *cmd = NULL;
 
 	/* check options */
-	while ((c = getopt(argc, argv, "c:igLpPsvxDtT:")) != -1) {
+	while ((c = getopt(argc, argv, "c:igjLpPsvxDtT:")) != -1) {
 		switch (c) {
 		case 'c':
 			if (cmd != NULL) {
