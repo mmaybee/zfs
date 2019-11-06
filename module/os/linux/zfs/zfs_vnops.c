@@ -762,10 +762,13 @@ zfs_write(struct inode *ip, uio_t *uio, int ioflag, cred_t *cr)
 			    max_blksz);
 			ASSERT(abuf != NULL);
 			ASSERT(arc_buf_size(abuf) == max_blksz);
-			if ((error = uiocopy(abuf->b_data, max_blksz,
+			while ((error = uiocopy(abuf->b_data, max_blksz,
 			    UIO_WRITE, uio, &cbytes))) {
-				dmu_return_arcbuf(abuf);
-				break;
+				if (error != EFAULT || 
+				    uio_prefaultpages(max_blksz, uio)) {
+					dmu_return_arcbuf(abuf);
+					break;
+				}
 			}
 			ASSERT(cbytes == max_blksz);
 		}
