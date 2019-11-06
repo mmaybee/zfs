@@ -582,6 +582,7 @@ extern int vdev_obsolete_counts_are_precise(vdev_t *vd, boolean_t *are_precise);
  * Other miscellaneous functions
  */
 int vdev_checkpoint_sm_object(vdev_t *vd, uint64_t *sm_obj);
+int get_spa_vdev_scan_idle(void);
 
 #ifdef	__cplusplus
 }

@@ -572,6 +572,12 @@ spa_vdev_scan_sync_state(spa_vdev_scan_t *svs, dmu_tx_t *tx)
 	    &svs->svs_phys, tx));
 }
 
+int
+get_spa_vdev_scan_idle(void)
+{
+	return spa_vdev_scan_idle;
+}
+
 #if defined(_KERNEL)
 module_param(spa_vdev_scan_delay, int, 0644);
 MODULE_PARM_DESC(spa_vdev_scan_delay, "Number of ticks to delay SPA rebuild");
