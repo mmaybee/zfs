@@ -6834,7 +6834,9 @@ spa_vdev_attach(spa_t *spa, uint64_t guid, nvlist_t *nvroot, int replacing)
 	 * respective datasets. We do not do this if resilvers have been
 	 * deferred.
 	 */
-	if (dsl_scan_resilvering(spa_get_dsl(spa)) &&
+	if (rebuild)
+		spa_vdev_scan_start(spa, oldvd, 0, dtl_max_txg);
+	else if (dsl_scan_resilvering(spa_get_dsl(spa)) &&
 	    spa_feature_is_enabled(spa, SPA_FEATURE_RESILVER_DEFER))
 		vdev_set_deferred_resilver(spa, newvd);
 	else
