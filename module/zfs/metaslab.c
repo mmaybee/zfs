@@ -1337,75 +1337,62 @@ metaslab_block_find(avl_tree_t *t, uint64_t start, uint64_t size)
 
 #if defined(WITH_DF_BLOCK_ALLOCATOR) || \
     defined(WITH_CF_BLOCK_ALLOCATOR)
+
+static uint64_t
+metaslab_find_offset(metaslab_t *msp, range_seg_t *rs, uint64_t size,
+    uint64_t align)
+{
+	uint64_t offset = P2ROUNDUP(rs->rs_start, align);
+
+	if (offset + size <= rs->rs_end) {
+		vdev_t *vd = msp->ms_group->mg_vd;
+		uint64_t next_offset;
+
+		if (vd->vdev_ops != &vdev_draid_ops)
+			return (offset);
+
+		next_offset = vdev_draid_check_block(vd, offset, size);
+		if (next_offset == offset)
+			return (offset);
+
+		offset = P2ROUNDUP(next_offset, align);
+		if (offset + size <= rs->rs_end) {
+			ASSERT3U(offset, ==,
+			    vdev_draid_check_block(vd, offset, size));
+			return (offset);
+		}
+	}
+
+	return (-1ULL);
+}
+
 /*
  * This is a helper function that can be used by the allocator to find
  * a suitable block to allocate. This will search the specified AVL
  * tree looking for a block that matches the specified criteria.
  */
 static uint64_t
-metaslab_block_picker(metaslab_t *msp, avl_tree_t *t, uint64_t *cursor, uint64_t size, 
-    uint64_t max_search, uint64_t align)
+metaslab_block_picker(metaslab_t *msp, avl_tree_t *t, uint64_t *cursor,
+    uint64_t size, uint64_t max_search, uint64_t align)
 {
 	range_seg_t *rs = metaslab_block_find(t, *cursor, size);
-	uint64_t first_found;
+	uint64_t first_found = 0;
 
 	if (rs != NULL)
 		first_found = rs->rs_start;
 
 	while (rs != NULL && rs->rs_start - first_found <= max_search) {
-		uint64_t offset = rs->rs_start;
-		if (offset + size <= rs->rs_end) {
-			vdev_t *vd = msp->ms_group->mg_vd;
-			uint64_t next_offset;
+		uint64_t offset = metaslab_find_offset(msp, rs, size, align);
 
-			if (vd->vdev_ops != &vdev_draid_ops) {
-				*cursor = offset + size;
-				return (offset);
-			}
-
-			next_offset = vdev_draid_check_block(vd, offset, size);
-			if (next_offset == offset) {
-				*cursor = offset + size;
-				return (offset);
-			}
-
-			offset = P2ROUNDUP(next_offset, align);
-			if (offset + size <= rs->rs_end) {
-				ASSERT3U(offset, ==,
-				    vdev_draid_check_block(vd, offset, size));
-				*cursor = offset + size;
-				return (offset);
-			}
+		if (offset != -1ULL) {
+			*cursor = offset + size;
+			return (offset);
 		}
 		rs = AVL_NEXT(t, rs);
 	}
 
 	*cursor = 0;
 	return (-1ULL);
-}
-#endif /* WITH_FF/DF/CF_BLOCK_ALLOCATOR */
-
-#if defined(WITH_FF_BLOCK_ALLOCATOR)
-/*
- * ==========================================================================
- * The first-fit block allocator
- * ==========================================================================
- */
-static uint64_t
-metaslab_ff_alloc(metaslab_t *msp, uint64_t size)
-{
-	/*
-	 * Find the largest power of 2 block size that evenly divides the
-	 * requested size. This is used to try to allocate blocks with similar
-	 * alignment from the same area of the metaslab (i.e. same cursor
-	 * bucket) but it does not guarantee that other allocations sizes
-	 * may exist in the same region.
-	 */
-	uint64_t align = size & -size;
-	uint64_t *cursor = &msp->ms_lbas[highbit64(align) - 1];
-	avl_tree_t *t = &msp->ms_allocatable->rt_root;
-
-	return (metaslab_block_picker(msp, t, cursor, size, align));
 }
 #endif /* WITH_DF/CF_BLOCK_ALLOCATOR */
 
@@ -1472,9 +1459,10 @@ metaslab_df_alloc(metaslab_t *msp, uint64_t size)
 			rs = metaslab_block_find(&msp->ms_allocatable_by_size,
 			    0, size);
 		}
-		if (rs != NULL && rs->rs_start + size <= rs->rs_end) {
-			offset = rs->rs_start;
-			*cursor = offset + size;
+		if (rs != NULL) {
+			offset = metaslab_find_offset(msp, rs, size, align);
+			if (offset != -1)
+				*cursor = offset + size;
 		}
 	}
 
@@ -2325,8 +2313,8 @@ metaslab_space_update(vdev_t *vd, metaslab_class_t *mc, int64_t alloc_delta,
 }
 
 int
-metaslab_init(metaslab_group_t *mg, uint64_t id, uint64_t object,
-    uint64_t txg, metaslab_t **msp)
+metaslab_init(metaslab_group_t *mg, uint64_t id, uint64_t object, uint64_t txg,
+    metaslab_t **msp)
 {
 	vdev_t *vd = mg->mg_vd;
 	spa_t *spa = vd->vdev_spa;
@@ -2630,6 +2618,30 @@ metaslab_set_fragmentation(metaslab_t *msp, boolean_t nodirty)
 }
 
 /*
+ * dRAID metaslabs start at a certain alignment, which causes their sizes to
+ * vary by a few sectors. The block allocator may get confused and pick a
+ * distant metaslab because the closer ones are slightly smaller. The small
+ * variance doesn't matter when the metaslab has already been allocated from.
+ *
+ * This function returns adjusted size to calculate metaslab weight, and
+ * should not be used for other purposes.
+ */
+static uint64_t
+metaslab_weight_size(metaslab_t *msp)
+{
+	vdev_t *vd = msp->ms_group->mg_vd;
+	uint64_t size;
+
+	if (vd->vdev_ops != &vdev_draid_ops ||
+	    space_map_allocated(msp->ms_sm) != 0)
+		return (msp->ms_size);
+
+	size = 1ULL << vd->vdev_ms_shift;
+	ASSERT3U(size, >=, msp->ms_size);
+	return (size);
+}
+
+/*
  * Compute a weight -- a selection preference value -- for the given metaslab.
  * This is based on the amount of free space, the level of fragmentation,
  * the LBA range, and whether the metaslab is loaded.
@@ -2646,7 +2658,7 @@ metaslab_space_weight(metaslab_t *msp)
 	/*
 	 * The baseline weight is the metaslab's free space.
 	 */
-	space = msp->ms_size - metaslab_allocated_space(msp);
+	space = metaslab_weight_size(msp) - metaslab_allocated_space(msp);
 
 	if (metaslab_fragmentation_factor_enabled &&
 	    msp->ms_fragmentation != ZFS_FRAG_INVALID) {
@@ -2807,7 +2819,7 @@ metaslab_segment_weight(metaslab_t *msp)
 	 * The metaslab is completely free.
 	 */
 	if (metaslab_allocated_space(msp) == 0) {
-		int idx = highbit64(msp->ms_size) - 1;
+		int idx = highbit64(metaslab_weight_size(msp)) - 1;
 		int max_idx = SPACE_MAP_HISTOGRAM_SIZE + shift - 1;
 
 		if (idx < max_idx) {
@@ -3640,10 +3652,10 @@ metaslab_sync(metaslab_t *msp, uint64_t txg)
 	 * could call into the DMU, because the DMU can call down to
 	 * us (e.g. via zio_free()) at any time.
 	 *
-	 * The spa_vdev_remove_thread() can be reading metaslab state
-	 * concurrently, and it is locked out by the ms_sync_lock.
-	 * Note that the ms_lock is insufficient for this, because it
-	 * is dropped by space_map_write().
+	 * The spa_vdev_remove_thread() or spa_scan_thread() can be reading
+	 * metaslab state concurrently, and it is locked out by the
+	 * ms_sync_lock. Note that the ms_lock is insufficient for this,
+	 * because it is dropped by space_map_write().
 	 */
 	tx = dmu_tx_create_assigned(spa_get_dsl(spa), txg);
 
@@ -4314,6 +4326,7 @@ metaslab_block_alloc(metaslab_t *msp, uint64_t size, uint64_t txg)
 
 	ASSERT(MUTEX_HELD(&msp->ms_lock));
 	VERIFY(!msp->ms_condensing);
+	VERIFY(!msp->ms_rebuilding);
 	VERIFY0(msp->ms_disabled);
 
 	start = mc->mc_ops->msop_alloc(msp, size);
@@ -4378,10 +4391,11 @@ find_valid_metaslab(metaslab_group_t *mg, uint64_t activation_weight,
 		}
 
 		/*
-		 * If the selected metaslab is condensing or disabled,
-		 * skip it.
+		 * If the selected metaslab is condensing, rebuilding,
+		 * or disabled, skip it.
 		 */
-		if (msp->ms_condensing || msp->ms_disabled > 0)
+		if (msp->ms_condensing || msp->ms_rebuilding ||
+		    msp->ms_disabled > 0)
 			continue;
 
 		*was_active = msp->ms_allocator != -1;
