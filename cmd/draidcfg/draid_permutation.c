@@ -50,8 +50,8 @@ static int verbose = 0;
 
 typedef struct
 {
-	int  groupsz;
 	int  ngroups;
+	int *groupsz;
 	int  nspares;
 	int  ndevs;
 	int  nrows;
@@ -127,10 +127,8 @@ check_map(map_t *map)
 	int   devcounts[MAX_DEVS];
 	int   brokencounts[MAX_DEVS];
 
-	ASSERT(map->groupsz <= MAX_GROUPSIZE);
 	ASSERT(map->ngroups <= MAX_GROUPS);
 	ASSERT(map->nspares <= MAX_SPARES);
-	ASSERT(map->ndevs == map->nspares + map->ngroups * map->groupsz);
 	ASSERT(map->nrows <= MAX_ROWS);
 	ASSERT(map->nbroken <= MAX_SPARES);
 
@@ -153,7 +151,9 @@ check_map(map_t *map)
 	memset(brokencounts, 0, sizeof (int) * map->ndevs);
 
 	for (i = 0; i < map->nbroken; i++) {
-		ASSERT(0 <= map->broken[i] && map->broken[i] < map->ndevs); /* valid drive */
+		ASSERTV(int dev = map->broken[i]);
+
+		ASSERT(0 <= dev && dev < map->ndevs); /* valid drive */
 		ASSERT(brokencounts[i] == 0); /* not used already */
 		brokencounts[i] = 1;
 	}
@@ -162,31 +162,27 @@ check_map(map_t *map)
 static map_t *
 dup_map(map_t *oldmap)
 {
-	int    groupsz = oldmap->groupsz;
-	int    ngroups = oldmap->ngroups;
-	int    nspares = oldmap->nspares;
-	int    ndevs   = oldmap->ndevs;
-	int    nrows   = oldmap->nrows;
 	map_t *map = malloc(sizeof (map_t));
-	int    i;
 
-	ASSERT(nrows <= MAX_ROWS);
-	ASSERT(ndevs <= MAX_DEVS);
+	map->groupsz = malloc(sizeof (int) * oldmap->ngroups);
 
-	map->groupsz = groupsz;
-	map->ngroups = ngroups;
-	map->nspares = nspares;
-	map->ndevs = ndevs;
-	map->nrows = nrows;
-	map->rows = malloc(sizeof (int *) * nrows);
+	for (int i = 0; i < oldmap->ngroups; i++)
+		map->groupsz[i] = oldmap->groupsz[i];
 
-	for (i = 0; i < nrows; i++) {
-		map->rows[i] = malloc(sizeof (int) * ndevs);
-		memcpy(map->rows[i], oldmap->rows[i], sizeof (int) * ndevs);
+	map->ngroups = oldmap->ngroups;
+	map->nspares = oldmap->nspares;
+	map->ndevs = oldmap->ndevs;
+	map->nrows = oldmap->nrows;
+	map->rows = malloc(sizeof (int *) * map->nrows);
+
+	for (int i = 0; i < map->nrows; i++) {
+		map->rows[i] = malloc(sizeof (int) * map->ndevs);
+		memcpy(map->rows[i], oldmap->rows[i],
+		    sizeof (int) * map->ndevs);
 	}
 
 	/* Init to no failures (nothing broken) */
-	map->broken = malloc(sizeof (int) * nspares);
+	map->broken = malloc(sizeof (int) * map->nspares);
 	map->nbroken = 0;
 
 	check_map(map);
@@ -194,28 +190,34 @@ dup_map(map_t *oldmap)
 }
 
 static map_t *
-new_map(int groupsz, int ngroups, int nspares, int nrows)
+new_map(int ndevs, int ngroups, int nspares, int nrows)
 {
 	map_t *map = malloc(sizeof (map_t));
-	int    ndevs = nspares + ngroups * groupsz;
-	int    i;
-	int    j;
+	int groupsz = (ndevs - nspares) / ngroups;
+	int extra = (ndevs - nspares) % ngroups;
 
 	ASSERT(nrows <= MAX_ROWS);
 	ASSERT(ndevs <= MAX_DEVS);
 
-	map->groupsz = groupsz;
 	map->ngroups = ngroups;
+	map->groupsz = malloc(sizeof (int) * ngroups);
+
+	for (int i = 0; i < ngroups; i++) {
+		map->groupsz[i] = groupsz;
+		if (i < extra)
+			map->groupsz[i] += 1;
+	}
+
 	map->nspares = nspares;
 	map->ndevs = ndevs;
 	map->nrows = nrows;
 	map->rows = malloc(sizeof (int *) * nrows);
 
-	for (i = 0; i < nrows; i++) {
+	for (int i = 0; i < nrows; i++) {
 		map->rows[i] = malloc(sizeof (int) * ndevs);
 
 		if (i == 0)
-			for (j = 0; j < ndevs; j++)
+			for (int j = 0; j < ndevs; j++)
 				map->rows[i][j] = j;
 		else
 			permute_devs(map->rows[i-1], map->rows[i], ndevs);
@@ -232,10 +234,8 @@ new_map(int groupsz, int ngroups, int nspares, int nrows)
 static void
 free_map(map_t *map)
 {
-	int i;
-
 	free(map->broken);
-	for (i = 0; i < map->nrows; i++)
+	for (int i = 0; i < map->nrows; i++)
 		free(map->rows[i]);
 	free(map->rows);
 	free(map);
@@ -244,9 +244,7 @@ free_map(map_t *map)
 static inline int
 is_broken(map_t *map, int dev)
 {
-	int i;
-
-	for (i = 0; i < map->nbroken; i++)
+	for (int i = 0; i < map->nbroken; i++)
 		if (dev == map->broken[i])
 			return (1);
 
@@ -261,11 +259,10 @@ eval_resilver(map_t *map, int print)
 	int  j;
 	int  k;
 	int  spare;
-	int  dev;
 	int  ndevs = map->ndevs;
 	int  nspares = map->nspares;
 	int  ngroups = map->ngroups;
-	int  groupsz = map->groupsz;
+	int  groupsz;
 	int  nrows = map->nrows;
 	int  writes[MAX_DEVS];
 	int  reads[MAX_DEVS];
@@ -281,15 +278,20 @@ eval_resilver(map_t *map, int print)
 		int *row = map->rows[i];
 
 		/* resilver all groups with broken drives */
+		int index = 0;
 		for (j = 0; j < ngroups; j++) {
 			int  fix = 0;
 
 			/* See if any disk in this group is broken */
+			groupsz = map->groupsz[j];
+			ASSERT(index < ndevs - groupsz);
 			for (k = 0; k < groupsz && !fix; k++)
-				fix = is_broken(map, row[j*groupsz + k]);
+				fix = is_broken(map, row[index + k]);
 
-			if (!fix)
+			if (!fix) {
+				index += groupsz;
 				continue;
+			}
 
 			/*
 			 * This group needs fixing
@@ -298,7 +300,7 @@ eval_resilver(map_t *map, int print)
 			 */
 			spare = ndevs - nspares;
 			for (k = 0; k < groupsz; k++) {
-				dev = row[j*groupsz + k];
+				int dev = row[index+k];
 
 				if (!is_broken(map, dev)) {
 					reads[dev]++;
@@ -312,6 +314,7 @@ eval_resilver(map_t *map, int print)
 					writes[row[spare++]]++;
 				}
 			}
+			index += groupsz;
 		}
 	}
 
@@ -459,7 +462,7 @@ permute_map(map_t *map, int temp)
 static map_t *
 develop_map(map_t *map)
 {
-	map_t *dmap = new_map(map->groupsz, map->ngroups,
+	map_t *dmap = new_map(map->ndevs, map->ngroups,
 	    map->nspares, map->nrows * map->ndevs);
 	int    base;
 	int    dev;
@@ -532,11 +535,11 @@ print_map_stats(map_t *map, int optimize, int print_ios)
 {
 	double score = eval_decluster(map, EVAL_WORST, 1, 0);
 
-	printf("%6s (%2d x %2d + %2d) x %5d: %2.3f\n",
+	printf("%6s (%2d - %2d / %2d) x %5d: %2.3f\n",
 	    (optimize == UNOPT) ? "Unopt" :
 	    (optimize == EVAL_WORST) ? "Worst" :
 	    (optimize == EVAL_MEAN) ? "Mean"  : "Rms",
-	    map->ngroups, map->groupsz, map->nspares, map->nrows, score);
+	    map->ndevs, map->nspares, map->ngroups, map->nrows, score);
 
 	if (map->ndevs < 80 && score >= 1.05)
 		printf("Warning score %6.3f has over 5 percent imbalance!\n",
@@ -568,9 +571,9 @@ draid_permutation_generate(struct vdev_draid_configuration *cfg)
 	const int faults = 1;
 	const int eval = EVAL_WORST;
 
-	int groupsz = cfg->dcf_data + cfg->dcf_parity;
 	int nspares = cfg->dcf_spare;
-	int ngroups = (cfg->dcf_children - nspares) / groupsz;
+	int ngroups = cfg->dcf_groups;
+	int ndevs = cfg->dcf_children;
 	int nrows;
 	int i, fd, urand_fd;
 	long int best_seed;
@@ -585,7 +588,7 @@ draid_permutation_generate(struct vdev_draid_configuration *cfg)
 
 	/* HH: fine tune these heuristics */
 	if (cfg->dcf_children - nspares > 80)
-		nrows = 128; /* 81 - ? */
+		nrows = 128; /* > 80 */
 	else if (cfg->dcf_children - nspares > 40)
 		nrows = 64;  /* 41 - 80 */
 	else
@@ -609,7 +612,7 @@ draid_permutation_generate(struct vdev_draid_configuration *cfg)
 
 		srand48(seed);
 
-		map = new_map(groupsz, ngroups, nspares, nrows);
+		map = new_map(ndevs, ngroups, nspares, nrows);
 		omap = optimize_map(dup_map(map), eval, faults);
 		if (eval_decluster(omap, eval, faults, 0) >
 		    eval_decluster(map, eval, faults, 0)) {
@@ -735,7 +738,7 @@ debug_main(int argc, char **argv)
 		return (1);
 	}
 
-	map = new_map(groupsz, ngroups, nspares, nrows);
+	map = new_map(groupsz * ngroups + nspares, ngroups, nspares, nrows);
 	if (verbose > 1)
 		print_map(map);
 

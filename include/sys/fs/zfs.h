@@ -726,6 +726,7 @@ typedef struct zpool_load_policy {
 #define	ZPOOL_CONFIG_DRAIDCFG_BASE	"com.intel:draid_base"
 #define	ZPOOL_CONFIG_DRAIDCFG_CHILDREN	"com.intel:draid_children"
 #define	ZPOOL_CONFIG_DRAIDCFG_PERM	"com.intel:draid_perm"
+#define	ZPOOL_CONFIG_DRAIDCFG_GROUPS	"com.cray:draid_groups"
 
 #define	ZPOOL_CONFIG_MMP_STATE		"mmp_state"	/* not stored on disk */
 #define	ZPOOL_CONFIG_MMP_TXG		"mmp_txg"	/* not stored on disk */

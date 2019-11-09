@@ -46,7 +46,8 @@ extern "C" {
 struct abd;
 
 struct vdev_draid_configuration {
-	uint64_t dcf_data;
+	uint64_t dcf_groups;
+	const uint64_t *dcf_data;
 	uint64_t dcf_parity;
 	uint64_t dcf_spare;
 	uint64_t dcf_children;

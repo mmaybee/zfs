@@ -39,8 +39,9 @@ vdev_draid_config_validate(const vdev_t *vd, nvlist_t *config)
 {
 	int i;
 	uint_t c;
+	uint8_t *data = NULL;
 	uint8_t *perm = NULL;
-	uint64_t n, d, p, s, b;
+	uint64_t n, g, p, s, b, tot;
 
 	if (nvlist_lookup_uint64(config,
 	    ZPOOL_CONFIG_DRAIDCFG_CHILDREN, &n) != 0) {
@@ -67,9 +68,10 @@ vdev_draid_config_validate(const vdev_t *vd, nvlist_t *config)
 	if (vd != NULL && p != vd->vdev_nparity)
 		return (B_FALSE);
 
-	if (nvlist_lookup_uint64(config, ZPOOL_CONFIG_DRAIDCFG_DATA, &d) != 0) {
+	if (nvlist_lookup_uint64(config,
+	    ZPOOL_CONFIG_DRAIDCFG_GROUPS, &g) != 0) {
 		draid_dbg(0, "Missing %s in configuration\n",
-		    ZPOOL_CONFIG_DRAIDCFG_DATA);
+		    ZPOOL_CONFIG_DRAIDCFG_GROUPS);
 		return (B_FALSE);
 	}
 
@@ -80,14 +82,41 @@ vdev_draid_config_validate(const vdev_t *vd, nvlist_t *config)
 		return (B_FALSE);
 	}
 
+	if (nvlist_lookup_uint8_array(config,
+	    ZPOOL_CONFIG_DRAIDCFG_DATA, &data, &c) != 0) {
+		draid_dbg(0, "Missing %s in configuration\n",
+		    ZPOOL_CONFIG_DRAIDCFG_DATA);
+		return (B_FALSE);
+	}
+
+	if (c != g) {
+		draid_dbg(0,
+		    "Data array has %u items, but "U64FMT" expected\n", c, g);
+		return (B_FALSE);
+	}
+
+	tot = 0;
+	for (i = 0; i < g; i++) {
+		uint64_t val = data[i];
+		uint64_t max = (n - s) / g + 1;
+
+		if (val > max) {
+			draid_dbg(0,
+			    "Invalid value "U64FMT" at "
+			    "group array %d\n", val, i);
+			return (B_FALSE);
+		}
+		tot += val;
+	}
+
 	if (nvlist_lookup_uint64(config, ZPOOL_CONFIG_DRAIDCFG_BASE, &b) != 0) {
 		draid_dbg(0, "Missing %s in configuration\n",
 		    ZPOOL_CONFIG_DRAIDCFG_BASE);
 		return (B_FALSE);
 	}
 
-	if (n == 0 || d == 0 || p == 0 || s == 0 || b == 0) {
-		draid_dbg(0, "Zero n/d/p/s/b\n");
+	if (n == 0 || g == 0 || p == 0 || s == 0 || b == 0) {
+		draid_dbg(0, "Zero n/g/p/s/b\n");
 		return (B_FALSE);
 	}
 
@@ -96,8 +125,8 @@ vdev_draid_config_validate(const vdev_t *vd, nvlist_t *config)
 		return (B_FALSE);
 	}
 
-	if ((n - s) % (p + d) != 0) {
-		draid_dbg(0, U64FMT" mod "U64FMT" is not 0\n", n - s, p + d);
+	if ((n - s) != tot) {
+		draid_dbg(0, U64FMT" - "U64FMT" is not 0\n", n - s, tot);
 		return (B_FALSE);
 	}
 
