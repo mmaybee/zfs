@@ -25,9 +25,11 @@
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
+#include <poll.h>
 
 #include <sys/sysevent/eventdefs.h>
 #include <sys/sysevent/dev.h>
+#include <sys/fm/protocol.h>
 
 #include "zed_log.h"
 #include "zed_disk_event.h"
@@ -42,6 +44,7 @@
  */
 
 pthread_t g_mon_tid;
+pthread_t dwd_mon_tid;
 struct udev *g_udev;
 struct udev_monitor *g_mon;
 
@@ -151,6 +154,187 @@ dev_event_nvlist(struct udev_device *dev)
 	}
 
 	return (nvl);
+}
+
+#define	DWDFAULT "/var/run/dwd.fifo-faulted"	/* DWD telemetry pipe */
+
+struct pollfd dwd_pfd[1];
+
+static char
+skipover(char match, boolean_t *hit_eof)
+{
+	int cnt;
+	char c;
+
+	while ((cnt = read(dwd_pfd[0].fd, &c, 1)) == 1 && c == match)
+		;
+	*hit_eof = (cnt == 0);
+	return (c);
+}
+
+static char
+skipto(char match, boolean_t *hit_eof)
+{
+	int cnt;
+	char c;
+
+	while ((cnt = read(dwd_pfd[0].fd, &c, 1)) == 1 && c != match)
+		;
+	*hit_eof = (cnt == 0);
+	return (c);
+}
+
+/*
+ *  Listen for Cray dwd device events
+ */
+static void *
+zed_dwd_monitor(void *arg)
+{
+
+	char eventbuf[256];
+	char *ptr;
+	boolean_t hit_eof;
+	char c;
+	uint64_t vdev_guid, pool_guid;
+	nvlist_t *nvl;
+	const char *class, *subclass;
+
+	dwd_pfd[0].events = POLLIN;
+	dwd_pfd[0].revents = 0;
+	zed_log_msg(LOG_INFO, "Waiting for new dwd disk events...");
+	while (1) {
+		/* allow a cancellation while blocked (poll) */
+		pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
+
+		/* blocks at poll until an event occurs */
+		if (poll(dwd_pfd, 1, -1) <= 0) {
+			zed_log_msg(LOG_WARNING, "zed_dwd_monitor: poll "
+			    "error %d", errno);
+			/*
+			 * re-init fd
+			 */
+			(void) close(dwd_pfd[0].fd);
+			if ((dwd_pfd[0].fd = open(DWDFAULT, O_RDWR|O_NONBLOCK))
+			    < 0) {
+				zed_log_msg(LOG_WARNING,
+			    "Failed to reopen DWD fault notification pipe %s"
+				" (%d)", DWDFAULT, errno);
+			}
+			continue;
+		}
+
+		/* allow all steps to complete before a cancellation */
+		pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
+
+		/*
+		 * Here if a notification is in the pipe.
+		 * Empty the dwd notification pipe so we will block till zed
+		 * gets another notification from dwd.  Post the event we got
+		 * notification of.  We expect:
+		 * .<faulted device guid>,<pool guid>. in the
+		 * pipe for each event.
+		 */
+		ptr = eventbuf;
+		/* skip to a non-dot character */
+		c = skipover('.', &hit_eof);
+		if (hit_eof) /* no more input */
+			continue;
+		/* gather characters till comma seen */
+		*ptr++ = c;
+		while (read(dwd_pfd[0].fd, &c, 1) == 1 && c != ',') {
+			*ptr++ = c;
+			if (c == '.') { /* unexpected end of record */
+				zed_log_msg(LOG_WARNING,
+				    "Malformed record on DWD fault pipe %s",
+				    DWDFAULT);
+				goto loop;
+			}
+			if ((ptr - eventbuf) >= 256) {
+				zed_log_msg(LOG_WARNING,
+				    "Overflow on DWD fault pipe %s", DWDFAULT);
+				/* skip till next dot seen */
+				(void) skipto('.', &hit_eof);
+				if (hit_eof) /* no more input */
+					goto loop;
+			}
+		}
+		*ptr = '\0';
+		/* eventbuf now has guid of faulted device */
+		vdev_guid = strtoull(eventbuf, NULL, 10);
+		/*
+		 * We have the vdev guid now get the pool guid it is in and
+		 * post a dwdfault event.
+		 */
+		ptr = eventbuf;
+		/* gather characters till dot seen */
+		while (read(dwd_pfd[0].fd, &c, 1) == 1 && c != '.') {
+			*ptr++ = c;
+			if ((ptr - eventbuf) >= 256) {
+				zed_log_msg(LOG_WARNING,
+				    "Overflow on DWD fault pipe %s", DWDFAULT);
+				/* skip till next dot seen */
+				(void) skipto('.', &hit_eof);
+				if (hit_eof) /* no more input */
+					goto loop;
+			}
+		}
+		*ptr = '\0';
+		/* eventbuf now has guid of pool with faulted device */
+		pool_guid = strtoull(eventbuf, NULL, 10);
+		/*
+		 * Create a dwdfault event and post it
+		 */
+		zed_log_msg(LOG_INFO,
+		    "Posting DWD fault event for pool %llu, vdev %llu",
+		    pool_guid, vdev_guid);
+		if (nvlist_alloc(&nvl, NV_UNIQUE_NAME, 0) != 0)
+			return (NULL);
+		(void) nvlist_add_uint64(nvl, ZFS_EV_POOL_GUID, pool_guid);
+		(void) nvlist_add_uint64(nvl, ZFS_EV_VDEV_GUID, vdev_guid);
+		class = "dwdfault.fs.zfs.device";
+		subclass = ESC_DISK;
+		(void) nvlist_add_string(nvl, FM_CLASS, class);
+		(void) zfs_agent_post_event(class, subclass, nvl);
+		c = skipto('.', &hit_eof);
+loop:
+		continue;
+	}
+}
+
+/*
+ * Set up monitor thread for notifications from Cray Disk Watcher Daemon
+ */
+int
+cray_dwd_watcher_init(void)
+{
+	/*
+	 * Set up the named pipe that DWD will write to.  Note that
+	 * DWD will also create the pipe so this may fail with EEXIST.
+	 */
+	if (mkfifo(DWDFAULT, 0666) < 0) {
+		if (errno != EEXIST) {
+			zed_log_msg(LOG_WARNING,
+			    "Failed to create DWD fault notification pipe %s",
+			    DWDFAULT);
+			return (-1);
+		}
+	}
+
+	if ((dwd_pfd[0].fd = open(DWDFAULT, O_RDWR|O_NONBLOCK)) < 0) {
+		zed_log_msg(LOG_WARNING,
+		    "Failed to open DWD fault notification pipe %s (%d)",
+		    DWDFAULT, errno);
+		return (-1);
+	}
+	/* spawn a thread to monitor the pipe */
+	if (pthread_create(&dwd_mon_tid, NULL, zed_dwd_monitor, NULL) != 0) {
+		zed_log_msg(LOG_WARNING,
+		    "pthread_create of dwd monitor failed");
+		return (-1);
+	}
+
+	zed_log_msg(LOG_INFO, "cray_dwd_watcher_init");
+	return (0);
 }
 
 /*
@@ -353,6 +537,17 @@ int
 zed_disk_event_init()
 {
 	int fd, fflags;
+
+	/*
+	 * Cray Specific - Cray has a Disk Watcher Daemon that monitors
+	 * every storage device in the system and will provide telemetry
+	 * that we can consume to get early warning of e.g. drive failures.
+	 * Spawn off a thread to monitor the telemetry from the Cray DWD.
+	 */
+	if (cray_dwd_watcher_init() < 0) {
+		zed_log_msg(LOG_WARNING, "dwd watcher init failed");
+		return (-1);
+	}
 
 	if ((g_udev = udev_new()) == NULL) {
 		zed_log_msg(LOG_WARNING, "udev_new failed (%d)", errno);

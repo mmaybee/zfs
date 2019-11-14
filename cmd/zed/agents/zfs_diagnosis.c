@@ -441,6 +441,54 @@ zfs_ereport_when(fmd_hdl_t *hdl, nvlist_t *nvl, er_timeval_t *when)
 }
 
 /*
+ * Handle fault reports from the Cray Disk Watcher Daemon
+ * Basically create a case for the faulted vdev and solve it
+ * so the device will be retired.
+ */
+void
+zfs_handle_dwd_fault(fmd_hdl_t *hdl, nvlist_t *nvl, const char *class)
+{
+	fmd_case_t *cs;
+	zfs_case_t *zcp;
+	zfs_case_data_t data = { 0 };
+	uint64_t ena, pool_guid, vdev_guid;
+	int32_t pool_state;
+
+	pool_state = SPA_LOAD_NONE;
+	/*
+	 * Open a new case.
+	 */
+	cs = fmd_case_open(hdl, NULL);
+
+	(void) nvlist_lookup_uint64(nvl,
+	    FM_EREPORT_PAYLOAD_ZFS_POOL_GUID, &pool_guid);
+	if (nvlist_lookup_uint64(nvl,
+	    FM_EREPORT_PAYLOAD_ZFS_VDEV_GUID, &vdev_guid) != 0)
+		vdev_guid = 0;
+
+	fmd_hdl_debug(hdl, "opening dwd fault case for vdev %llu due to '%s'",
+	    vdev_guid, class);
+
+	/*
+	 * Initialize the case buffer.
+	 */
+	fmd_buf_create(hdl, cs, CASE_DATA, sizeof (zfs_case_data_t));
+
+	if (nvlist_lookup_uint64(nvl, FM_EREPORT_ENA, &ena) != 0)
+		ena = 0;
+	data.zc_version = CASE_DATA_VERSION_SERD;
+	data.zc_pool_guid = pool_guid;
+	data.zc_vdev_guid = vdev_guid;
+	data.zc_pool_state = (int)pool_state;
+
+	fmd_buf_write(hdl, cs, CASE_DATA, &data, sizeof (data));
+
+	zcp = zfs_case_unserialize(hdl, cs);
+	assert(zcp != NULL);
+	zfs_case_solve(hdl, zcp, "fault.fs.zfs.vdev.io", B_FALSE);
+}
+
+/*
  * Main fmd entry point.
  */
 /*ARGSUSED*/
@@ -467,6 +515,16 @@ zfs_fm_recv(fmd_hdl_t *hdl, fmd_event_t *ep, nvlist_t *nvl, const char *class)
 		    strrchr(class, '.') + 1);
 		zfs_purge_cases(hdl);
 		zfs_stats.resource_drops.fmds_value.ui64++;
+		return;
+	}
+
+	/*
+	 * Is this a Cray-specific fault event from the Cray Disk Watcher
+	 * Daemon?  If so, go generate an appropriate fault for the
+	 * retire agent to retire the faulted disk.
+	 */
+	if (fmd_nvl_class_match(hdl, nvl, "dwdfault.fs.zfs.*")) {
+		zfs_handle_dwd_fault(hdl, nvl, class);
 		return;
 	}
 

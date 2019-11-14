@@ -55,8 +55,8 @@ extern "C" {
  * patches.
  */
 
-#define refcount_t	zfs_refcount_t
-#define refcount_add	zfs_refcount_add
+#define	refcount_t	zfs_refcount_t
+#define	refcount_add	zfs_refcount_add
 /* CRAY END */
 
 #ifdef	ZFS_DEBUG

@@ -276,6 +276,7 @@ zfs_agent_dispatch(const char *class, const char *subclass, nvlist_t *nvl)
 	 */
 	if (strstr(class, "ereport.fs.zfs.") != NULL ||
 	    strstr(class, "resource.fs.zfs.") != NULL ||
+	    strstr(class, "dwdfault.fs.zfs.") != NULL || /* Cray DWD fault */
 	    strcmp(class, "sysevent.fs.zfs.vdev_remove") == 0 ||
 	    strcmp(class, "sysevent.fs.zfs.vdev_remove_dev") == 0 ||
 	    strcmp(class, "sysevent.fs.zfs.pool_destroy") == 0) {
