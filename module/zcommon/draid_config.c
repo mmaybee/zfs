@@ -97,7 +97,7 @@ vdev_draid_config_validate(const vdev_t *vd, nvlist_t *config)
 
 	tot = 0;
 	for (i = 0; i < g; i++) {
-		uint64_t val = data[i];
+		uint64_t val = data[i] + p;
 		uint64_t max = (n - s) / g + 1;
 
 		if (val > max) {

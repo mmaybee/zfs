@@ -122,7 +122,7 @@ create_config(const uint64_t groups, const uint64_t parity,
 
 	cfg->dcf_groups = groups;
 	array = calloc(groups, sizeof (uint64_t));
-	data = (children - spare) / groups;
+	data = (children - spare) / groups - parity;
 	extra = (children - spare) % groups;
 	for (int i = 0; i < groups; i++) {
 		array[i] = data;

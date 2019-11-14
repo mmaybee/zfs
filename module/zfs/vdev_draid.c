@@ -154,7 +154,7 @@ vdev_draid_map_alloc(zio_t *zio, uint64_t **array)
 	perm = b / ((ncols - nspare) * slice);
 	offset = b % ((ncols - nspare) * slice);
 	/* Figure out in which group the IO will fall */
-	groupsz = ndata = 0;
+	group_range = groupsz = ndata = 0;
 	for (group = 0; group < ngroups; group++) {
 		ndata = cfg->dcf_data[group];
 		groupsz = ndata + nparity;
@@ -163,10 +163,11 @@ vdev_draid_map_alloc(zio_t *zio, uint64_t **array)
 			break;
 		offset -= group_range;
 	}
+	ASSERT3U(group, <, ngroups);
 	ASSERT0(offset % groupsz);
 
 	/* The IO should fit in this group chunk */
-	ASSERT3U(psize, <=, (group_range - offset) * (ndata / groupsz));
+	ASSERT3U(psize, <=, (slice - (offset % group_range) / groupsz) * ndata);
 
 	/* The starting byte offset on each child vdev. */
 	o = (perm * slice + offset / groupsz) << unit_shift;
@@ -376,7 +377,7 @@ vdev_draid_offset2group(const vdev_t *vd, uint64_t offset, boolean_t mirror)
 {
 	uint64_t perm, perm_off, group;
 	struct vdev_draid_configuration *cfg = vd->vdev_tsd;
-	uint64_t nparity = cfg->dcf_parity;
+	uint64_t nparity = vd->vdev_nparity;
 
 	ASSERT0(mirror);
 	vdev_draid_assert_vd(vd);
@@ -393,6 +394,7 @@ vdev_draid_offset2group(const vdev_t *vd, uint64_t offset, boolean_t mirror)
 		perm_off -= group_size;
 	}
 
+	ASSERT3U(group, <, cfg->dcf_groups);
 #if 0
 	copies = mirror ?
 	    vd->vdev_nparity + 1 : vd->vdev_nparity + cfg->dcf_data;
@@ -423,7 +425,7 @@ vdev_draid_group2offset(const vdev_t *vd, uint64_t group, boolean_t mirror)
 	offset +=
 	    vdev_draid_get_groupsz(vd, mirror) * (group % groups_per_perm);
 #else
-	uint64_t nparity = cfg->dcf_parity;
+	uint64_t nparity = vd->vdev_nparity;
 	offset = DRAID_PERM_ASIZE(vd) * (group / cfg->dcf_groups);
 	for (int i = 0; i < group % cfg->dcf_groups; i++) {
 		uint64_t ndata = cfg->dcf_data[i];
@@ -468,7 +470,7 @@ vdev_draid_is_remainder_group(const vdev_t *vd,
 uint64_t
 vdev_draid_get_astart(const vdev_t *vd, const uint64_t start)
 {
-	uint64_t astart, perm_off;
+	uint64_t astart, perm_off, groupsz;
 	boolean_t mirror =
 	    vdev_draid_ms_mirrored(vd, start >> vd->vdev_ms_shift);
 	uint64_t group = vdev_draid_offset2group(vd, start, mirror);
@@ -480,19 +482,18 @@ vdev_draid_get_astart(const vdev_t *vd, const uint64_t start)
 	if (vdev_draid_is_remainder_group(vd, group, mirror))
 		return (start);
 
+#if 0
+	groupsz = mirror ?
+	    vd->vdev_nparity + 1 : vd->vdev_nparity + cfg->dcf_data;
+#else
+	groupsz = cfg->dcf_data[group % cfg->dcf_groups] + vd->vdev_nparity;
+	ASSERT3U(groupsz, <=, cfg->dcf_children - cfg->dcf_spare);
+#endif
 	perm_off = start % DRAID_PERM_ASIZE(vd);
 	astart = start - perm_off;
-#if 0
-	copies = mirror ?
-	    vd->vdev_nparity + 1 : vd->vdev_nparity + cfg->dcf_data;
-	astart += roundup(perm_off, copies << vd->vdev_ashift);
-#else
-	for (int i = 0; i < group; i++) {
-		uint64_t groupsz = cfg->dcf_data[i] + cfg->dcf_parity;
-		astart += groupsz << vd->vdev_ashift;
-	}
-	/* XXX - may need 1 extra group... */
-#endif
+	astart += roundup(perm_off, groupsz << vd->vdev_ashift);
+	ASSERT3U(roundup(perm_off, groupsz << vd->vdev_ashift) %
+	    groupsz << vd->vdev_ashift, ==, 0);
 
 	ASSERT3U(astart, >=, start);
 	return (astart);
@@ -700,7 +701,8 @@ vdev_draid_group_degraded(vdev_t *vd, vdev_t *oldvd,
 	} else {
 		raidz_map_t *rm = vdev_draid_map_alloc(zio, &perm);
 
-		ASSERT3U(rm->rm_scols, ==, cfg->dcf_parity + cfg->dcf_data);
+		ASSERT3U(rm->rm_scols, ==,
+		    cfg->dcf_parity + cfg->dcf_data[group % cfg->dcf_groups]);
 
 		for (c = 0; c < rm->rm_scols; c++) {
 			raidz_col_t *rc = &rm->rm_col[c];
