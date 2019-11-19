@@ -865,6 +865,9 @@ vdev_draid_open(vdev_t *vd, uint64_t *asize, uint64_t *max_asize,
 
 	vdev_open_children(vd);
 
+	/*
+	 * Find the size of the smallest child
+	 */
 	for (c = 0; c < vd->vdev_children; c++) {
 		cvd = vd->vdev_child[c];
 
@@ -874,9 +877,12 @@ vdev_draid_open(vdev_t *vd, uint64_t *asize, uint64_t *max_asize,
 			continue;
 		}
 
-		*asize = MIN(*asize - 1, cvd->vdev_asize - 1) + 1;
-		*max_asize = MIN(*max_asize - 1, cvd->vdev_max_asize - 1) + 1;
-		*ashift = MAX(*ashift, cvd->vdev_ashift);
+		if (cvd->vdev_ops != &vdev_draid_spare_ops) {
+			*asize = MIN(*asize - 1, cvd->vdev_asize - 1) + 1;
+			*max_asize =
+			    MIN(*max_asize - 1, cvd->vdev_max_asize - 1) + 1;
+			*ashift = MAX(*ashift, cvd->vdev_ashift);
+		}
 	}
 
 	if (cfg->dcf_zero_abd == NULL) {
@@ -1501,8 +1507,14 @@ vdev_dspare_open(vdev_t *vd, uint64_t *psize, uint64_t *max_psize,
 
 skip_open:
 	asize = draid->vdev_asize / (draid->vdev_children - cfg->dcf_spare);
-	max_asize = draid->vdev_max_asize /
-	    (draid->vdev_children - cfg->dcf_spare);
+	/*
+	 * If parent max_asize not yet set, use asize.
+	 */
+	if (draid->vdev_max_asize == 0)
+		max_asize = asize;
+	else
+		max_asize = draid->vdev_max_asize /
+		    (draid->vdev_children - cfg->dcf_spare);
 
 	*ashift = draid->vdev_ashift;
 	*psize = asize + (VDEV_LABEL_START_SIZE + VDEV_LABEL_END_SIZE);
