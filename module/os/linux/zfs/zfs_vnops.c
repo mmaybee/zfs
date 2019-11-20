@@ -533,6 +533,9 @@ zfs_read(struct inode *ip, uio_t *uio, int ioflag, cred_t *cr)
 	}
 #endif /* HAVE_UIO_ZEROCOPY */
 
+	if (ioflag & O_DIRECT)
+		uio->uio_extflg |= UIO_DIRECT;
+
 	while (n > 0) {
 		ssize_t nbytes = MIN(n, zfs_read_chunk_size -
 		    P2PHASE(uio->uio_loffset, zfs_read_chunk_size));
@@ -658,7 +661,7 @@ zfs_write(struct inode *ip, uio_t *uio, int ioflag, cred_t *cr)
 		xuio = (xuio_t *)uio;
 	else
 #endif
-		if (uio_prefaultpages(MIN(n, max_blksz), uio)) {
+		if (uio_prefaultpages(n, uio)) {
 			ZFS_EXIT(zfsvfs);
 			return (SET_ERROR(EFAULT));
 		}
@@ -712,7 +715,6 @@ zfs_write(struct inode *ip, uio_t *uio, int ioflag, cred_t *cr)
 	ASSERTV(int	iovcnt = uio->uio_iovcnt);
 #endif
 
-
 	/*
 	 * Write the file in reasonable size chunks.  Each chunk is written
 	 * in a separate transaction; this keeps the intent log records small
@@ -748,7 +750,7 @@ zfs_write(struct inode *ip, uio_t *uio, int ioflag, cred_t *cr)
 #endif
 		} else if (n >= max_blksz && woff >= zp->z_size &&
 		    P2PHASE(woff, max_blksz) == 0 &&
-		    zp->z_blksz == max_blksz) {
+		    zp->z_blksz == max_blksz && !(ioflag & O_DIRECT)) {
 			/*
 			 * This write covers a full block.  "Borrow" a buffer
 			 * from the dmu so that we can fill it before we enter
@@ -764,7 +766,7 @@ zfs_write(struct inode *ip, uio_t *uio, int ioflag, cred_t *cr)
 			ASSERT(arc_buf_size(abuf) == max_blksz);
 			while ((error = uiocopy(abuf->b_data, max_blksz,
 			    UIO_WRITE, uio, &cbytes))) {
-				if (error != EFAULT || 
+				if (error != EFAULT ||
 				    uio_prefaultpages(max_blksz, uio)) {
 					dmu_return_arcbuf(abuf);
 					break;
@@ -825,7 +827,14 @@ zfs_write(struct inode *ip, uio_t *uio, int ioflag, cred_t *cr)
 
 		ssize_t tx_bytes;
 		if (abuf == NULL) {
+			if (ioflag & O_DIRECT)
+				uio->uio_extflg |= UIO_DIRECT;
+
 			tx_bytes = uio->uio_resid;
+			/*
+			 * Needed to resolve a deadlock which could occur when
+			 * handling a page fault
+			 */
 			uio->uio_fault_disable = B_TRUE;
 			error = dmu_write_uio_dbuf(sa_get_db(zp->z_sa_hdl),
 			    uio, nbytes, tx);

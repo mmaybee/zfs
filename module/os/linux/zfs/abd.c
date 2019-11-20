@@ -207,6 +207,14 @@ static abd_stats_t abd_stats = {
 #define	abd_for_each_sg(abd, sg, n, i)	\
 	for_each_sg(ABD_SCATTER(abd).abd_sgl, sg, n, i)
 
+#define	ABD_MULTI(abd)		(abd->abd_u.abd_multi)
+#define	abd_is_multi(abd)	((abd->abd_flags & ABD_FLAG_MULTI_LIST) != 0)
+
+typedef struct abd_link {
+	abd_t 		*link_abd;
+	list_node_t link_node;
+} abd_link_t;
+
 /* see block comment above for description */
 int zfs_abd_scatter_enabled = B_TRUE;
 unsigned zfs_abd_scatter_max_order = MAX_ORDER - 1;
@@ -235,6 +243,7 @@ unsigned zfs_abd_scatter_max_order = MAX_ORDER - 1;
  */
 int zfs_abd_scatter_min_size = 512 * 3;
 
+static char *abd_zero_buf;
 static kmem_cache_t *abd_cache = NULL;
 static kstat_t *abd_ksp;
 
@@ -441,20 +450,27 @@ abd_alloc_pages(abd_t *abd, size_t size)
 }
 #endif /* !CONFIG_HIGHMEM */
 
+/*
+ * This must be called if any of the sg_table allocation fuctions
+ * are called
+ */
+static void
+abd_free_sg_table(abd_t *abd)
+{
+	struct sg_table table;
+
+	table.sgl = ABD_SCATTER(abd).abd_sgl;
+	table.nents = table.orig_nents = ABD_SCATTER(abd).abd_nents;
+	sg_free_table(&table);
+}
+
 static void
 abd_free_pages(abd_t *abd)
 {
 	struct scatterlist *sg = NULL;
-	struct sg_table table;
 	struct page *page;
 	int nr_pages = ABD_SCATTER(abd).abd_nents;
 	int order, i = 0;
-
-	if (abd->abd_flags & ABD_FLAG_MULTI_ZONE)
-		ABDSTAT_BUMPDOWN(abdstat_scatter_page_multi_zone);
-
-	if (abd->abd_flags & ABD_FLAG_MULTI_CHUNK)
-		ABDSTAT_BUMPDOWN(abdstat_scatter_page_multi_chunk);
 
 	abd_for_each_sg(abd, sg, nr_pages, i) {
 		page = sg_page(sg);
@@ -464,10 +480,7 @@ abd_free_pages(abd_t *abd)
 		ASSERT3U(sg->length, <=, PAGE_SIZE << order);
 		ABDSTAT_BUMPDOWN(abdstat_scatter_orders[order]);
 	}
-
-	table.sgl = ABD_SCATTER(abd).abd_sgl;
-	table.nents = table.orig_nents = nr_pages;
-	sg_free_table(&table);
+	abd_free_sg_table(abd);
 }
 
 #else /* _KERNEL */
@@ -475,8 +488,6 @@ abd_free_pages(abd_t *abd)
 #ifndef PAGE_SHIFT
 #define	PAGE_SHIFT (highbit64(PAGESIZE)-1)
 #endif
-
-struct page;
 
 #define	zfs_kmap_atomic(chunk, km)	((void *)chunk)
 #define	zfs_kunmap_atomic(addr, km)	do { (void)(addr); } while (0)
@@ -497,6 +508,19 @@ sg_init_table(struct scatterlist *sg, int nr)
 	memset(sg, 0, nr * sizeof (struct scatterlist));
 	sg[nr - 1].end = 1;
 }
+
+/*
+ * This must be called if any of the sg_table allocation fuctions
+ * are called
+ */
+static void
+abd_free_sg_table(abd_t *abd)
+{
+	int nents = ABD_SCATTER(abd).abd_nents;
+	vmem_free(ABD_SCATTER(abd).abd_sgl,
+	    nents * sizeof (struct scatterlist));
+}
+
 
 #define	for_each_sg(sgl, sg, nr, i)	\
 	for ((i) = 0, (sg) = (sgl); (i) < (nr); (i)++, (sg) = sg_next(sg))
@@ -557,7 +581,7 @@ abd_free_pages(abd_t *abd)
 		}
 	}
 
-	vmem_free(ABD_SCATTER(abd).abd_sgl, n * sizeof (struct scatterlist));
+	abd_free_sg_table(abd);
 }
 
 #endif /* _KERNEL */
@@ -565,10 +589,17 @@ abd_free_pages(abd_t *abd)
 void
 abd_init(void)
 {
-	int i;
-
 	abd_cache = kmem_cache_create("abd_t", sizeof (abd_t),
 	    0, NULL, NULL, NULL, NULL, NULL, 0);
+
+	abd_zero_buf = zio_buf_alloc(SPA_MAXBLOCKSIZE);
+	(void) memset(abd_zero_buf, 0, SPA_MAXBLOCKSIZE);
+#ifdef ZFS_IS_GPL_COMPATIBLE
+#ifdef _KERNEL
+	set_memory_ro((unsigned long)abd_zero_buf,
+	    SPA_MAXBLOCKSIZE >> PAGE_SHIFT);
+#endif
+#endif
 
 	abd_ksp = kstat_create("zfs", 0, "abdstats", "misc", KSTAT_TYPE_NAMED,
 	    sizeof (abd_stats) / sizeof (kstat_named_t), KSTAT_FLAG_VIRTUAL);
@@ -576,7 +607,7 @@ abd_init(void)
 		abd_ksp->ks_data = &abd_stats;
 		kstat_install(abd_ksp);
 
-		for (i = 0; i < MAX_ORDER; i++) {
+		for (int i = 0; i < MAX_ORDER; i++) {
 			snprintf(abd_stats.abdstat_scatter_orders[i].name,
 			    KSTAT_STRLEN, "scatter_order_%d", i);
 			abd_stats.abdstat_scatter_orders[i].data_type =
@@ -593,6 +624,17 @@ abd_fini(void)
 		abd_ksp = NULL;
 	}
 
+	if (abd_zero_buf) {
+#ifdef ZFS_IS_GPL_COMPATIBLE
+#ifdef _KERNEL
+		set_memory_rw((unsigned long)abd_zero_buf,
+		    SPA_MAXBLOCKSIZE >> PAGE_SHIFT);
+#endif
+#endif
+		zio_buf_free(abd_zero_buf, SPA_MAXBLOCKSIZE);
+		abd_zero_buf = NULL;
+	}
+
 	if (abd_cache) {
 		kmem_cache_destroy(abd_cache);
 		abd_cache = NULL;
@@ -606,12 +648,14 @@ abd_verify(abd_t *abd)
 	ASSERT3U(abd->abd_size, <=, SPA_MAXBLOCKSIZE);
 	ASSERT3U(abd->abd_flags, ==, abd->abd_flags & (ABD_FLAG_LINEAR |
 	    ABD_FLAG_OWNER | ABD_FLAG_META | ABD_FLAG_MULTI_ZONE |
-	    ABD_FLAG_MULTI_CHUNK | ABD_FLAG_LINEAR_PAGE));
+	    ABD_FLAG_MULTI_CHUNK | ABD_FLAG_LINEAR_PAGE | ABD_FLAG_FROM_PAGES |
+	    ABD_FLAG_MULTI_LIST | ABD_FLAG_LINKED | ABD_FLAG_GAP |
+	    ABD_FLAG_ZEROS));
 	IMPLY(abd->abd_parent != NULL, !(abd->abd_flags & ABD_FLAG_OWNER));
 	IMPLY(abd->abd_flags & ABD_FLAG_META, abd->abd_flags & ABD_FLAG_OWNER);
 	if (abd_is_linear(abd)) {
 		ASSERT3P(abd->abd_u.abd_linear.abd_buf, !=, NULL);
-	} else {
+	} else if (!abd_is_multi(abd)) {
 		size_t n;
 		int i = 0;
 		struct scatterlist *sg = NULL;
@@ -629,7 +673,7 @@ abd_verify(abd_t *abd)
 static inline abd_t *
 abd_alloc_struct(void)
 {
-	abd_t *abd = kmem_cache_alloc(abd_cache, KM_PUSHPAGE);
+	abd_t *abd = kmem_cache_alloc(abd_cache, KM_SLEEP);
 
 	ASSERT3P(abd, !=, NULL);
 	ABDSTAT_INCR(abdstat_struct_size, sizeof (abd_t));
@@ -677,16 +721,42 @@ abd_alloc(size_t size, boolean_t is_metadata)
 	return (abd);
 }
 
+abd_t *
+abd_get_zeros(size_t size)
+{
+	abd_t *abd = abd_alloc_struct();
+
+	ASSERT3U(size, <=, SPA_MAXBLOCKSIZE);
+	abd->abd_flags = ABD_FLAG_LINEAR | ABD_FLAG_ZEROS;
+	abd->abd_size = size;
+	abd->abd_parent = NULL;
+	abd->abd_u.abd_linear.abd_buf = abd_zero_buf;
+	zfs_refcount_create(&abd->abd_children);
+	return (abd);
+}
+
 static void
 abd_free_scatter(abd_t *abd)
 {
-	abd_free_pages(abd);
+	if (abd->abd_flags & ABD_FLAG_MULTI_ZONE)
+		ABDSTAT_BUMPDOWN(abdstat_scatter_page_multi_zone);
+
+	if (abd->abd_flags & ABD_FLAG_MULTI_CHUNK)
+		ABDSTAT_BUMPDOWN(abdstat_scatter_page_multi_chunk);
+
+	if (abd->abd_flags & ABD_FLAG_FROM_PAGES) {
+		/* pages are not owned, just free the table */
+		abd_free_sg_table(abd);
+	} else {
+		abd_free_pages(abd);
+		ABDSTAT_INCR(abdstat_scatter_data_size, -(int)abd->abd_size);
+		ABDSTAT_INCR(abdstat_scatter_chunk_waste,
+		    (int)abd->abd_size -
+		    (int)P2ROUNDUP(abd->abd_size, PAGESIZE));
+	}
 
 	zfs_refcount_destroy(&abd->abd_children);
 	ABDSTAT_BUMPDOWN(abdstat_scatter_cnt);
-	ABDSTAT_INCR(abdstat_scatter_data_size, -(int)abd->abd_size);
-	ABDSTAT_INCR(abdstat_scatter_chunk_waste,
-	    (int)abd->abd_size - (int)P2ROUNDUP(abd->abd_size, PAGESIZE));
 
 	abd_free_struct(abd);
 }
@@ -750,13 +820,38 @@ abd_free_linear(abd_t *abd)
 	abd_free_struct(abd);
 }
 
+static void
+abd_free_multi(abd_t *abd)
+{
+	abd_link_t *link;
+
+	while ((link = list_tail(&ABD_MULTI(abd).abd_chain)) != NULL) {
+		abd_t *cabd = link->link_abd;
+
+		list_remove(&ABD_MULTI(abd).abd_chain, link);
+		abd->abd_size -= cabd->abd_size;
+		if (cabd->abd_flags & ABD_FLAG_GAP) {
+			if (cabd->abd_flags & ABD_FLAG_OWNER)
+				abd_free(cabd);
+			else
+				abd_put(cabd);
+		}
+		kmem_free(link, sizeof (abd_link_t));
+	}
+	ASSERT3U(abd->abd_size, ==, 0);
+	list_destroy(&ABD_MULTI(abd).abd_chain);
+	zfs_refcount_destroy(&abd->abd_children);
+	abd_free_struct(abd);
+}
+
 /*
- * Free an ABD. Only use this on ABDs allocated with abd_alloc() or
- * abd_alloc_linear().
+ * Free an ABD. Only use this on ABDs allocated with abd_alloc(),
+ * and abd_alloc_linear().
  */
 void
 abd_free(abd_t *abd)
 {
+	ASSERT(!abd_is_multi(abd));
 	abd_verify(abd);
 	ASSERT3P(abd->abd_parent, ==, NULL);
 	ASSERT(abd->abd_flags & ABD_FLAG_OWNER);
@@ -804,6 +899,68 @@ abd_alloc_for_io(size_t size, boolean_t is_metadata)
 }
 
 /*
+ * Create an ABD that will be the head of a list of ABD's. This is used
+ * to "chain" scatter/gather lists together when constructing aggregated
+ * IO's. To free this abd, abd_put() must be called.
+ */
+abd_t *
+abd_alloc_multi(void)
+{
+	abd_t *abd;
+
+	abd = abd_alloc_struct();
+	abd->abd_flags = ABD_FLAG_MULTI_LIST;
+	abd->abd_size = 0;
+	abd->abd_parent = NULL;
+	list_create(&ABD_MULTI(abd).abd_chain,
+	    sizeof (abd_link_t), offsetof(abd_link_t, link_node));
+	zfs_refcount_create(&abd->abd_children);
+	return (abd);
+}
+
+/*
+ * Add a child ABD to a chained list of ABD's.
+ */
+void
+abd_add_child(abd_t *pabd, abd_t *cabd, boolean_t is_gap)
+{
+	abd_link_t *abd_link;
+
+	ASSERT(abd_is_multi(pabd));
+
+	if (is_gap)
+		cabd->abd_flags |= ABD_FLAG_GAP;
+	abd_link = kmem_alloc(sizeof (abd_link_t), KM_PUSHPAGE);
+	list_link_init(&abd_link->link_node);
+	abd_link->link_abd = cabd;
+	list_insert_tail(&ABD_MULTI(pabd).abd_chain, abd_link);
+	pabd->abd_size += cabd->abd_size;
+}
+
+/*
+ * Locate the child abd for the supplied offset.
+ * Return a new offset relative to the child.
+ */
+static abd_link_t *
+abd_find_child_off(abd_t *abd, size_t *off)
+{
+	ASSERT(abd_is_multi(abd));
+	abd_link_t *link = list_head(&ABD_MULTI(abd).abd_chain);
+	abd_t *cabd = link->link_abd;
+
+	while (link) {
+		if (*off >= cabd->abd_size)
+			*off -= cabd->abd_size;
+		else
+			break;
+		link = list_next(&ABD_MULTI(abd).abd_chain, link);
+		cabd = link->link_abd;
+	}
+	ASSERT(link != NULL);
+	return (link);
+}
+
+/*
  * Allocate a new ABD to point to offset off of sabd. It shares the underlying
  * buffer data with sabd. Use abd_put() to free. sabd must not be freed while
  * any derived ABDs exist.
@@ -811,9 +968,11 @@ abd_alloc_for_io(size_t size, boolean_t is_metadata)
 static inline abd_t *
 abd_get_offset_impl(abd_t *sabd, size_t off, size_t size)
 {
-	abd_t *abd;
+	abd_t *abd = NULL;
 
 	abd_verify(sabd);
+
+	VERIFY3U(size, >, 0);
 	ASSERT3U(off, <=, sabd->abd_size);
 
 	if (abd_is_linear(sabd)) {
@@ -828,6 +987,24 @@ abd_get_offset_impl(abd_t *sabd, size_t off, size_t size)
 
 		abd->abd_u.abd_linear.abd_buf =
 		    (char *)sabd->abd_u.abd_linear.abd_buf + off;
+	} else if (abd_is_multi(sabd)) {
+		abd_link_t *link;
+		size_t left = size;
+
+		link = abd_find_child_off(sabd, &off);
+		while (link && left  > 0) {
+			abd_t *nabd, *cabd = link->link_abd;
+			int csize = MIN(left, cabd->abd_size - off);
+
+			nabd = abd_get_offset_impl(cabd, off, csize);
+			if (abd == NULL)
+				abd = abd_alloc_multi();
+			abd_add_child(abd, nabd, B_TRUE);
+			link = list_next(&ABD_MULTI(sabd).abd_chain, link);
+			left -= csize;
+			off = 0;
+		}
+		ASSERT3U(left, ==, 0);
 	} else {
 		int i = 0;
 		struct scatterlist *sg = NULL;
@@ -858,6 +1035,7 @@ abd_get_offset_impl(abd_t *sabd, size_t off, size_t size)
 	zfs_refcount_create(&abd->abd_children);
 	(void) zfs_refcount_add_many(&sabd->abd_children, abd->abd_size, abd);
 
+	abd_verify(abd);
 	return (abd);
 }
 
@@ -865,8 +1043,6 @@ abd_t *
 abd_get_offset(abd_t *sabd, size_t off)
 {
 	size_t size = sabd->abd_size > off ? sabd->abd_size - off : 0;
-
-	VERIFY3U(size, >, 0);
 
 	return (abd_get_offset_impl(sabd, off, size));
 }
@@ -878,6 +1054,7 @@ abd_get_offset_size(abd_t *sabd, size_t off, size_t size)
 
 	return (abd_get_offset_impl(sabd, off, size));
 }
+
 
 /*
  * Allocate a linear ABD structure for buf. You must free this with abd_put()
@@ -905,19 +1082,80 @@ abd_get_from_buf(void *buf, size_t size)
 	return (abd);
 }
 
+#ifdef _KERNEL
 /*
- * Free an ABD allocated from abd_get_offset() or abd_get_from_buf(). Will not
- * free the underlying scatterlist or buffer.
+ * Allocate a scatter gather ABD structure for pages. You must free this
+ * with abd_free().
+ */
+abd_t *
+abd_get_from_pages(struct page **pages, uint_t n_pages)
+{
+	abd_t *abd = abd_alloc_struct();
+	struct sg_table table;
+	gfp_t gfp = __GFP_NOWARN | GFP_NOIO;
+	size_t size = n_pages * PAGE_SIZE;
+	int err;
+
+	VERIFY3U(size, <=, SPA_MAXBLOCKSIZE);
+
+	/*
+	 * Even if this buf is filesystem metadata, we only track that if we
+	 * own the underlying data buffer, which is not true in this case.
+	 * Therefore, we don't ever use ABD_FLAG_META here.
+	 */
+	abd->abd_flags = 0;
+	abd->abd_flags = ABD_FLAG_FROM_PAGES;
+	abd->abd_size = size;
+	abd->abd_parent = NULL;
+	zfs_refcount_create(&abd->abd_children);
+
+	while ((err = sg_alloc_table_from_pages(&table, pages, n_pages, 0,
+	    size, gfp))) {
+		ABDSTAT_BUMP(abdstat_scatter_sg_table_retry);
+		schedule_timeout_interruptible(1);
+		ASSERT3U(err, ==, 0);
+	}
+
+	ABD_SCATTER(abd).abd_offset = 0;
+	ABD_SCATTER(abd).abd_sgl = table.sgl;
+	ABD_SCATTER(abd).abd_nents = table.nents;
+
+/* XXX - if nents == 1 (happens often), should we convert to LINEAR_PAGE? */
+	if (table.nents > 1) {
+		ABDSTAT_BUMP(abdstat_scatter_page_multi_chunk);
+		abd->abd_flags |= ABD_FLAG_MULTI_CHUNK;
+	}
+
+	abd_verify(abd);
+	return (abd);
+}
+
+#endif /* _KERNEL */
+
+/*
+ * Free an ABD allocated from an abd_get_xxx() function. Does not
+ * free the unowned underlying data buffers.
  */
 void
 abd_put(abd_t *abd)
 {
 	abd_verify(abd);
-	ASSERT(!(abd->abd_flags & ABD_FLAG_OWNER));
 
 	if (abd->abd_parent != NULL) {
 		(void) zfs_refcount_remove_many(&abd->abd_parent->abd_children,
 		    abd->abd_size, abd);
+	}
+
+	if (abd_is_multi(abd)) {
+		abd_free_multi(abd);
+		return;
+	}
+
+	ASSERT(!(abd->abd_flags & ABD_FLAG_OWNER));
+
+	if (abd->abd_flags & ABD_FLAG_FROM_PAGES) {
+		abd_free_scatter(abd);
+		return;
 	}
 
 	zfs_refcount_destroy(&abd->abd_children);
@@ -1080,6 +1318,7 @@ static void
 abd_iter_init(struct abd_iter *aiter, abd_t *abd, int km_type)
 {
 	abd_verify(abd);
+	ASSERT(!abd_is_multi(abd));
 	aiter->iter_abd = abd;
 	aiter->iter_mapaddr = NULL;
 	aiter->iter_mapsize = 0;
@@ -1185,6 +1424,26 @@ abd_iter_unmap(struct abd_iter *aiter)
 }
 
 int
+abd_iterate_multi(abd_t *abd, size_t off, size_t size,
+    abd_iter_func_t *func, void *private)
+{
+	abd_link_t *link;
+
+	link = abd_find_child_off(abd, &off);
+	while (link && size > 0) {
+		abd_t *cabd = link->link_abd;
+		int ret, csize = MIN(size, cabd->abd_size - off);
+		size -= csize;
+		ret = abd_iterate_func(cabd, off, csize, func, private);
+		if (ret || size == 0)
+			return (ret);
+		off = 0;
+		link = list_next(&ABD_MULTI(abd).abd_chain, link);
+	}
+	return (0);
+}
+
+int
 abd_iterate_func(abd_t *abd, size_t off, size_t size,
     abd_iter_func_t *func, void *private)
 {
@@ -1193,6 +1452,11 @@ abd_iterate_func(abd_t *abd, size_t off, size_t size,
 
 	abd_verify(abd);
 	ASSERT3U(off + size, <=, abd->abd_size);
+
+	if (abd_is_multi(abd)) {
+		ret = abd_iterate_multi(abd, off, size, func, private);
+		return (ret);
+	}
 
 	abd_iter_init(&aiter, abd, 0);
 	abd_iter_advance(&aiter, off);
@@ -1572,6 +1836,10 @@ abd_nr_pages_off(abd_t *abd, unsigned int size, size_t off)
 {
 	unsigned long pos;
 
+	while (abd_is_multi(abd))
+		abd = abd_find_child_off(abd, &off)->link_abd;
+
+	ASSERT(!abd_is_multi(abd));
 	if (abd_is_linear(abd))
 		pos = (unsigned long)abd_to_buf(abd) + off;
 	else
@@ -1581,20 +1849,89 @@ abd_nr_pages_off(abd_t *abd, unsigned int size, size_t off)
 	    (pos >> PAGE_SHIFT);
 }
 
+static unsigned int
+bio_map(struct bio *bio, void *buf_ptr, unsigned int bio_size)
+{
+	unsigned int offset, size, i;
+	struct page *page;
+
+	offset = offset_in_page(buf_ptr);
+	for (i = 0; i < bio->bi_max_vecs; i++) {
+		size = PAGE_SIZE - offset;
+
+		if (bio_size <= 0)
+			break;
+
+		if (size > bio_size)
+			size = bio_size;
+
+		if (is_vmalloc_addr(buf_ptr))
+			page = vmalloc_to_page(buf_ptr);
+		else
+			page = virt_to_page(buf_ptr);
+
+		/*
+		 * Some network related block device uses tcp_sendpage, which
+		 * doesn't behave well when using 0-count page, this is a
+		 * safety net to catch them.
+		 */
+		ASSERT3S(page_count(page), >, 0);
+
+		if (bio_add_page(bio, page, size, offset) != size)
+			break;
+
+		buf_ptr += size;
+		bio_size -= size;
+		offset = 0;
+	}
+
+	return (bio_size);
+}
+
 /*
- * bio_map for scatter ABD.
+ * bio_map for multi_list ABD.
+ */
+static unsigned int
+abd_multi_bio_map_off(struct bio *bio, abd_t *abd,
+    unsigned int io_size, size_t off)
+{
+	abd_link_t *link;
+
+	ASSERT(abd_is_multi(abd));
+	link = abd_find_child_off(abd, &off);
+	while (link) {
+		abd_t *cabd = link->link_abd;
+		int remainder, size = MIN(io_size, cabd->abd_size - off);
+		remainder = abd_bio_map_off(bio, cabd, size, off);
+		io_size -= (size - remainder);
+		if (io_size == 0 || remainder > 0)
+			return (io_size);
+		off = 0;
+		link = list_next(&ABD_MULTI(abd).abd_chain, link);
+	}
+	ASSERT(io_size == 0);
+	return (io_size);
+}
+
+/*
+ * bio_map for ABD.
  * @off is the offset in @abd
  * Remaining IO size is returned
  */
 unsigned int
-abd_scatter_bio_map_off(struct bio *bio, abd_t *abd,
+abd_bio_map_off(struct bio *bio, abd_t *abd,
     unsigned int io_size, size_t off)
 {
 	int i;
 	struct abd_iter aiter;
 
-	ASSERT(!abd_is_linear(abd));
 	ASSERT3U(io_size, <=, abd->abd_size - off);
+	if (abd_is_linear(abd))
+		return (bio_map(bio, ((char *)abd_to_buf(abd)) + off, io_size));
+
+	ASSERT(!abd_is_linear(abd));
+	if (abd_is_multi(abd))
+		return (abd_multi_bio_map_off(bio, abd, io_size, off));
 
 	abd_iter_init(&aiter, abd, 0);
 	abd_iter_advance(&aiter, off);

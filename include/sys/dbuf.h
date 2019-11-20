@@ -341,6 +341,7 @@ int dbuf_read(dmu_buf_impl_t *db, zio_t *zio, uint32_t flags);
 void dmu_buf_will_not_fill(dmu_buf_t *db, dmu_tx_t *tx);
 void dmu_buf_will_fill(dmu_buf_t *db, dmu_tx_t *tx);
 void dmu_buf_fill_done(dmu_buf_t *db, dmu_tx_t *tx);
+blkptr_t *dmu_buf_get_bp(dmu_buf_impl_t *db);
 void dbuf_assign_arcbuf(dmu_buf_impl_t *db, arc_buf_t *buf, dmu_tx_t *tx);
 dbuf_dirty_record_t *dbuf_dirty(dmu_buf_impl_t *db, dmu_tx_t *tx);
 arc_buf_t *dbuf_loan_arcbuf(dmu_buf_impl_t *db);
