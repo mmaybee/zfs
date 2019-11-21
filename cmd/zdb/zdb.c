@@ -1006,7 +1006,7 @@ dump_metaslab(metaslab_t *msp)
 			ASSERT3U(msp->ms_size, <=, 1ULL << vd->vdev_ms_shift);
 		else
 			ASSERT3U(msp->ms_size, ==, 1ULL << vd->vdev_ms_shift);
-        }
+	}
 
 	dump_spacemap(spa->spa_meta_objset, msp->ms_sm);
 

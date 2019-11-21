@@ -176,39 +176,39 @@ zpool_clear_label(int fd)
 		if (nvlist_lookup_uint64(config, ZPOOL_CONFIG_GUID,
 		    &guid) != 0 || guid == 0) {
 			nvlist_free(config);
-                        continue;
-                }
+			continue;
+		}
 
-                /* Skip labels which are not in a known valid state. */
-                if (nvlist_lookup_uint64(config, ZPOOL_CONFIG_POOL_STATE,
-                    &state) != 0 || state > POOL_STATE_L2CACHE) {
-                        nvlist_free(config);
-                        continue;
-                }
+		/* Skip labels which are not in a known valid state. */
+		if (nvlist_lookup_uint64(config, ZPOOL_CONFIG_POOL_STATE,
+		    &state) != 0 || state > POOL_STATE_L2CACHE) {
+			nvlist_free(config);
+			continue;
+		}
 
-                nvlist_free(config);
+		nvlist_free(config);
 
-                /*
-                 * A valid label was found, overwrite this label's nvlist
-                 * and uberblocks with zeros on disk.  This is done to prevent
-                 * system utilities, like blkid, from incorrectly detecting a
-                 * partial label.  The leading pad space is left untouched.
-                 */
-                memset(label, 0, sizeof (vdev_label_t));
-                size_t label_size = sizeof (vdev_label_t) - (2 * VDEV_PAD_SIZE);
+		/*
+		 * A valid label was found, overwrite this label's nvlist
+		 * and uberblocks with zeros on disk.  This is done to prevent
+		 * system utilities, like blkid, from incorrectly detecting a
+		 * partial label.  The leading pad space is left untouched.
+		 */
+		memset(label, 0, sizeof (vdev_label_t));
+		size_t label_size = sizeof (vdev_label_t) - (2 * VDEV_PAD_SIZE);
 
-                if (pwrite64(fd, label, label_size, label_offset(size, l) +
-                    (2 * VDEV_PAD_SIZE)) == label_size) {
-                        labels_cleared++;
-                }
-        }
+		if (pwrite64(fd, label, label_size, label_offset(size, l) +
+		    (2 * VDEV_PAD_SIZE)) == label_size) {
+			labels_cleared++;
+		}
+	}
 
-        free(label);
+	free(label);
 
-        if (labels_cleared == 0)
-                return (-1);
+	if (labels_cleared == 0)
+		return (-1);
 
-        return (0);
+	return (0);
 }
 
 static boolean_t

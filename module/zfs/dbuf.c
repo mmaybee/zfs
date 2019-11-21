@@ -1093,7 +1093,7 @@ dbuf_clear_data(dmu_buf_impl_t *db)
 	if (db->db_buf == NULL)
 		db->db.db_data = NULL;
 	if (db->db_state != DB_NOFILL) {
-	 	ASSERT3P(db->db_buf, ==, NULL);
+		ASSERT3P(db->db_buf, ==, NULL);
 		db->db_state = DB_UNCACHED;
 	}
 }
@@ -1114,7 +1114,6 @@ dbuf_set_data(dmu_buf_impl_t *db, arc_buf_t *buf)
 	    db->db_last_dirty->dt.dl.dr_override_state == DR_OVERRIDDEN &&
 	    db->db_last_dirty->dt.dl.dr_data == NULL) {
 		db->db_last_dirty->dt.dl.dr_data = db->db_buf;
-/*db->db_last_dirty->dt.dl.dr_data->b_flags |= 0xE000;*/
 		zfs_dbgmsg("completed read for Direct IO write of %p, "
 		    "setting dr_data to %p", db, db->db_buf);
 	}
@@ -1557,7 +1556,6 @@ dbuf_fix_old_data(dmu_buf_impl_t *db, uint64_t txg)
 			    size, arc_buf_lsize(db->db_buf), compress_type);
 		} else {
 			dr->dt.dl.dr_data = arc_alloc_buf(spa, db, type, size);
-/*dr->dt.dl.dr_data->b_flags |= 0xE000;*/
 		}
 		bcopy(db->db.db_data, dr->dt.dl.dr_data->b_data, size);
 	} else {
@@ -1918,7 +1916,6 @@ dbuf_new_size(dmu_buf_impl_t *db, int size, dmu_tx_t *tx)
 	if (db->db_level == 0) {
 		ASSERT3P(db->db_last_dirty->dt.dl.dr_data, ==, obuf);
 		db->db_last_dirty->dt.dl.dr_data = buf;
-/*db->db_last_dirty->dt.dl.dr_data->b_flags |= 0xE000;*/
 	}
 	ASSERT3U(db->db_last_dirty->dr_txg, ==, tx->tx_txg);
 	ASSERT3U(db->db_last_dirty->dr_accounted, ==, osize);
@@ -2131,8 +2128,6 @@ dbuf_dirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 			ASSERT(data_old != NULL);
 		}
 		dr->dt.dl.dr_data = data_old;
-/*if (data_old)
-dr->dt.dl.dr_data->b_flags |= 0xE000;*/
 	} else {
 		mutex_init(&dr->dt.di.dr_mtx, NULL, MUTEX_NOLOCKDEP, NULL);
 		list_create(&dr->dt.di.dr_children,
@@ -2684,7 +2679,6 @@ dbuf_assign_arcbuf(dmu_buf_impl_t *db, arc_buf_t *buf, dmu_tx_t *tx)
 				arc_release(db->db_buf, db);
 			}
 			dr->dt.dl.dr_data = buf;
-/*dr->dt.dl.dr_data->b_flags |= 0xE000;*/
 			arc_buf_destroy(db->db_buf, db);
 		} else if (dr == NULL || dr->dt.dl.dr_data != db->db_buf) {
 			arc_release(db->db_buf, db);

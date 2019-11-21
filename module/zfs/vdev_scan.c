@@ -192,9 +192,10 @@ spa_vdev_scan_draid_rebuild(spa_vdev_scan_t *svs, zio_t *pio,
 		    group + 1, mirror) - offset;
 
 		ASSERT(!vdev_draid_is_remainder_group(vd, group, mirror));
-		/* XXX - need to rework interface
+#if 0
+		/* XXX - need to rework interface */
 		ASSERT3U(group_left, <=, vdev_draid_get_groupsz(vd, mirror));
-		*/
+#endif
 
 		chunksz = MIN(length, group_left);
 		if (vdev_draid_group_degraded(vd, oldvd,
@@ -577,7 +578,7 @@ spa_vdev_scan_sync_state(spa_vdev_scan_t *svs, dmu_tx_t *tx)
 int
 get_spa_vdev_scan_idle(void)
 {
-	return spa_vdev_scan_idle;
+	return (spa_vdev_scan_idle);
 }
 
 #if defined(_KERNEL)

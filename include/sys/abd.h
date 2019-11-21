@@ -44,17 +44,17 @@ struct page; /* forward declaration to be used in abd.c */
 #endif
 
 typedef enum abd_flags {
-	ABD_FLAG_LINEAR	     = 1 << 0,	/* is buffer linear (or scattered)? */
-	ABD_FLAG_OWNER	     = 1 << 1,	/* does it own its data buffers? */
-	ABD_FLAG_META	     = 1 << 2,	/* does this represent FS metadata? */
-	ABD_FLAG_MULTI_ZONE  = 1 << 3,	/* pages split over memory zones */
-	ABD_FLAG_MULTI_CHUNK = 1 << 4,	/* pages split over multiple chunks */
-	ABD_FLAG_LINEAR_PAGE = 1 << 5,	/* linear but allocd from page */
-	ABD_FLAG_FROM_PAGES  = 1 << 6,	/* does not own the pages */
-	ABD_FLAG_MULTI_LIST  = 1 << 7,	/* multiple ABDs chained together */
-	ABD_FLAG_LINKED      = 1 << 8,	/* ABD is on a chained list */
-	ABD_FLAG_GAP	     = 1 << 9,	/* ABD is for read gap */
-	ABD_FLAG_ZEROS	     = 1 << 10	/* ABD is a zero-filled buffer */
+	ABD_FLAG_LINEAR		= 1 << 0, /* is buffer linear (or scattered)? */
+	ABD_FLAG_OWNER		= 1 << 1, /* does it own its data buffers? */
+	ABD_FLAG_META		= 1 << 2, /* does this represent FS metadata? */
+	ABD_FLAG_MULTI_ZONE	= 1 << 3, /* pages split over memory zones */
+	ABD_FLAG_MULTI_CHUNK	= 1 << 4, /* pages split over multiple chunks */
+	ABD_FLAG_LINEAR_PAGE	= 1 << 5, /* linear but allocd from page */
+	ABD_FLAG_FROM_PAGES	= 1 << 6, /* does not own the pages */
+	ABD_FLAG_MULTI_LIST	= 1 << 7, /* multiple ABDs chained together */
+	ABD_FLAG_LINKED		= 1 << 8, /* ABD is on a chained list */
+	ABD_FLAG_GAP		= 1 << 9, /* ABD is for read gap */
+	ABD_FLAG_ZEROS		= 1 << 10 /* ABD is a zero-filled buffer */
 } abd_flags_t;
 
 typedef struct abd {

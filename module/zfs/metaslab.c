@@ -2819,9 +2819,10 @@ metaslab_segment_weight(metaslab_t *msp)
 	 * The metaslab is completely free.
 	 */
 	if (metaslab_allocated_space(msp) == 0) {
-		/* XXX - don;t want draid adjustment here...
+#if 0
+		/* XXX - don't want draid adjustment here... */
 		int idx = highbit64(metaslab_weight_size(msp)) - 1;
-		*/
+#endif
 		int idx = highbit64(msp->ms_size) - 1;
 		int max_idx = SPACE_MAP_HISTOGRAM_SIZE + shift - 1;
 

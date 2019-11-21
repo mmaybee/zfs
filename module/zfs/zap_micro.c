@@ -1327,9 +1327,9 @@ zap_update(objset_t *os, uint64_t zapobj, const char *name,
 
 #ifdef ZFS_DEBUG
 	/*
- 	 * If there is an old value, it shouldn't change across the
- 	 * lockdir (eg, due to bprewrite's xlation).
- 	 */
+	 * If there is an old value, it shouldn't change across the
+	 * lockdir (eg, due to bprewrite's xlation).
+	 */
 
 	if (integer_size == 8 && num_integers == 1)
 		(void) zap_lookup(os, zapobj, name, 8, 1, &oldval);
