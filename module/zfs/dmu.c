@@ -486,7 +486,7 @@ dmu_buf_hold_array_by_dnode(dnode_t *dn, uint64_t offset, uint64_t length,
     boolean_t read, void *tag, int *numbufsp, dmu_buf_t ***dbpp, uint32_t flags)
 {
 	dmu_buf_t **dbp;
-	uint64_t blkid, nblks, i;
+	uint64_t blkid, nblks;
 	uint32_t dbuf_flags;
 	int err;
 	zio_t *zio;
@@ -523,7 +523,7 @@ dmu_buf_hold_array_by_dnode(dnode_t *dn, uint64_t offset, uint64_t length,
 
 	zio = zio_root(dn->dn_objset->os_spa, NULL, NULL, ZIO_FLAG_CANFAIL);
 	blkid = dbuf_whichblock(dn, 0, offset);
-	for (i = 0; i < nblks; i++) {
+	for (int i = 0; i < nblks; i++) {
 		dmu_buf_impl_t *db = dbuf_hold(dn, blkid + i, tag);
 		if (db == NULL) {
 			rw_exit(&dn->dn_struct_rwlock);
@@ -554,7 +554,7 @@ dmu_buf_hold_array_by_dnode(dnode_t *dn, uint64_t offset, uint64_t length,
 
 	/* wait for other io to complete */
 	if (read) {
-		for (i = 0; i < nblks; i++) {
+		for (int i = 0; i < nblks; i++) {
 			dmu_buf_impl_t *db = (dmu_buf_impl_t *)dbp[i];
 			mutex_enter(&db->db_mtx);
 			while (db->db_state == DB_READ ||
@@ -615,13 +615,12 @@ dmu_buf_hold_array_by_bonus(dmu_buf_t *db_fake, uint64_t offset,
 void
 dmu_buf_rele_array(dmu_buf_t **dbp_fake, int numbufs, void *tag)
 {
-	int i;
 	dmu_buf_impl_t **dbp = (dmu_buf_impl_t **)dbp_fake;
 
 	if (numbufs == 0)
 		return;
 
-	for (i = 0; i < numbufs; i++) {
+	for (int i = 0; i < numbufs; i++) {
 		if (dbp[i])
 			dbuf_rele(dbp[i], tag);
 	}
@@ -1026,11 +1025,6 @@ dmu_read_abd(dnode_t *dn, uint64_t offset, uint64_t size,
 	zio_t *rio;
 
 	ASSERT(flags & DMU_DIRECTIO);
-	/*
-	 * Direct IO must be page aligned
-	 */
-	if (!IO_PAGE_ALIGNED(offset, size))
-		return (SET_ERROR(ENOTSUP));
 
 	err = dmu_buf_hold_array_by_dnode(dn, offset,
 	    size, B_FALSE, FTAG, &numbufs, &dbp, 0);
@@ -1118,7 +1112,6 @@ dmu_read_impl(dnode_t *dn, uint64_t offset, uint64_t size,
 
 	while (size > 0) {
 		uint64_t mylen = MIN(size, DMU_MAX_ACCESS / 2);
-		int i;
 
 		/*
 		 * NB: we could do this block-at-a-time, but it's nice
@@ -1129,7 +1122,7 @@ dmu_read_impl(dnode_t *dn, uint64_t offset, uint64_t size,
 		if (err)
 			break;
 
-		for (i = 0; i < numbufs; i++) {
+		for (int i = 0; i < numbufs; i++) {
 			uint64_t tocpy;
 			int64_t bufoff;
 			dmu_buf_t *db = dbp[i];
@@ -1170,7 +1163,9 @@ int
 dmu_read_by_dnode(dnode_t *dn, uint64_t offset, uint64_t size, void *buf,
     uint32_t flags)
 {
-	if (zfs_force_directio)
+	int align = dn->dn_datablksz;
+
+	if (zfs_force_directio && IO_ALIGNED(offset, size, align))
 		flags |= DMU_DIRECTIO;
 	return (dmu_read_impl(dn, offset, size, buf, flags));
 }
@@ -1696,11 +1691,6 @@ dmu_write_abd(dnode_t *dn, uint64_t offset, uint64_t size,
 	zio_t *rio;
 
 	ASSERT(flags & DMU_DIRECTIO);
-	/*
-	 * Direct IO must be page aligned
-	 */
-	if (!IO_PAGE_ALIGNED(offset, size))
-		return (SET_ERROR(ENOTSUP));
 
 	err = dmu_buf_hold_array_by_dnode(dn, offset,
 	    size, B_FALSE, FTAG, &numbufs, &dbp, 0);
@@ -1755,9 +1745,7 @@ static void
 dmu_write_impl(dmu_buf_t **dbp, int numbufs, uint64_t offset, uint64_t size,
     const void *buf, dmu_tx_t *tx)
 {
-	int i;
-
-	for (i = 0; i < numbufs; i++) {
+	for (int i = 0; i < numbufs; i++) {
 		uint64_t tocpy;
 		int64_t bufoff;
 		dmu_buf_t *db = dbp[i];
@@ -1843,7 +1831,7 @@ dmu_prealloc(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
     dmu_tx_t *tx)
 {
 	dmu_buf_t **dbp;
-	int numbufs, i;
+	int numbufs;
 
 	if (size == 0)
 		return;
@@ -1851,7 +1839,7 @@ dmu_prealloc(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
 	VERIFY0(dmu_buf_hold_array(os, object, offset, size,
 	    FALSE, FTAG, &numbufs, &dbp));
 
-	for (i = 0; i < numbufs; i++) {
+	for (int i = 0; i < numbufs; i++) {
 		dmu_buf_t *db = dbp[i];
 
 		dmu_buf_will_not_fill(db, tx);
@@ -1882,12 +1870,12 @@ void
 dmu_redact(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
     dmu_tx_t *tx)
 {
-	int numbufs, i;
+	int numbufs;
 	dmu_buf_t **dbp;
 
 	VERIFY0(dmu_buf_hold_array(os, object, offset, size, FALSE, FTAG,
 	    &numbufs, &dbp));
-	for (i = 0; i < numbufs; i++)
+	for (int i = 0; i < numbufs; i++)
 		dmu_buf_redact(dbp[i], tx);
 	dmu_buf_rele_array(dbp, numbufs, FTAG);
 }
@@ -2100,7 +2088,7 @@ int
 dmu_read_uio_dnode(dnode_t *dn, uio_t *uio, uint64_t size)
 {
 	dmu_buf_t **dbp;
-	int numbufs, i, err;
+	int numbufs, err;
 #ifdef HAVE_UIO_ZEROCOPY
 	xuio_t *xuio = NULL;
 #endif
@@ -2119,7 +2107,7 @@ dmu_read_uio_dnode(dnode_t *dn, uio_t *uio, uint64_t size)
 	if (err)
 		return (err);
 
-	for (i = 0; i < numbufs; i++) {
+	for (int i = 0; i < numbufs; i++) {
 		uint64_t tocpy;
 		int64_t bufoff;
 		dmu_buf_t *db = dbp[i];
@@ -2711,7 +2699,7 @@ int
 dmu_offset_next(objset_t *os, uint64_t object, boolean_t hole, uint64_t *off)
 {
 	dnode_t *dn;
-	int i, err;
+	int err;
 	boolean_t clean = B_TRUE;
 
 	err = dnode_hold(os, object, FTAG, &dn);
@@ -2721,7 +2709,7 @@ dmu_offset_next(objset_t *os, uint64_t object, boolean_t hole, uint64_t *off)
 	/*
 	 * Check if dnode is dirty
 	 */
-	for (i = 0; i < TXG_SIZE; i++) {
+	for (int i = 0; i < TXG_SIZE; i++) {
 		if (multilist_link_active(&dn->dn_dirty_link[i])) {
 			clean = B_FALSE;
 			break;
@@ -2858,11 +2846,10 @@ byteswap_uint64_array(void *vbuf, size_t size)
 {
 	uint64_t *buf = vbuf;
 	size_t count = size >> 3;
-	int i;
 
 	ASSERT((size & 7) == 0);
 
-	for (i = 0; i < count; i++)
+	for (int i = 0; i < count; i++)
 		buf[i] = BSWAP_64(buf[i]);
 }
 
@@ -2871,11 +2858,10 @@ byteswap_uint32_array(void *vbuf, size_t size)
 {
 	uint32_t *buf = vbuf;
 	size_t count = size >> 2;
-	int i;
 
 	ASSERT((size & 3) == 0);
 
-	for (i = 0; i < count; i++)
+	for (int i = 0; i < count; i++)
 		buf[i] = BSWAP_32(buf[i]);
 }
 
@@ -2884,11 +2870,10 @@ byteswap_uint16_array(void *vbuf, size_t size)
 {
 	uint16_t *buf = vbuf;
 	size_t count = size >> 1;
-	int i;
 
 	ASSERT((size & 1) == 0);
 
-	for (i = 0; i < count; i++)
+	for (int i = 0; i < count; i++)
 		buf[i] = BSWAP_16(buf[i]);
 }
 
