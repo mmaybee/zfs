@@ -1443,7 +1443,11 @@ vdev_draid_spare_read_config(vdev_t *vd)
 	fnvlist_add_uint64(nv, ZPOOL_CONFIG_POOL_TXG, spa->spa_config_txg);
 	fnvlist_add_uint64(nv, ZPOOL_CONFIG_TOP_GUID, vd->vdev_top->vdev_guid);
 
-	if (vd->vdev_isspare)
+	/*
+	 * We are in use if our parent is spare_ops
+	 */
+	if (vd->vdev_parent != NULL &&
+	    vd->vdev_parent->vdev_ops == &vdev_spare_ops)
 		fnvlist_add_uint64(nv,
 		    ZPOOL_CONFIG_POOL_STATE, POOL_STATE_ACTIVE);
 	else
