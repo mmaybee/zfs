@@ -6593,13 +6593,13 @@ spa_vdev_add(spa_t *spa, nvlist_t *nvroot)
 
 	/*
 	 * We can't increment a feature while holding spa_vdev so we
-	 * have to do it here, this means we land in the next TXG after
+	 * have to do it here, this means we may land in a TXG after
 	 * the add TXG.
 	 */
 	if (draid != 0) {
 		dmu_tx_t *tx;
 
-		tx = dmu_tx_create_assigned(spa->spa_dsl_pool, txg + 1);
+		tx = dmu_tx_create(spa->spa_meta_objset);
 		for (c = 0; c < draid; c++)
 			spa_feature_incr(spa, SPA_FEATURE_DRAID, tx);
 
