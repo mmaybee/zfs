@@ -4786,10 +4786,14 @@ dbuf_write(dbuf_dirty_record_t *dr, arc_buf_t *data, dmu_tx_t *tx)
 		 * The BP for this block has been provided by open context
 		 * (by dmu_sync() or dmu_buf_write_embedded()).
 		 */
-		if (data)
-			VERIFY3U(arc_buf_size(data), ==, db->db.db_size);
-		abd_t *contents = (data != NULL) ?
-		    abd_get_from_buf(data->b_data, arc_buf_size(data)) : NULL;
+		blkptr_t *bp = &dr->dt.dl.dr_overridden_by;
+		abd_t *contents = NULL;
+		if (data) {
+			ASSERT(BP_IS_HOLE(bp) ||
+			    arc_buf_lsize(data) == BP_GET_LSIZE(bp));
+			contents =
+			    abd_get_from_buf(data->b_data, arc_buf_size(data));
+		}
 
 		dr->dr_zio = zio_write(zio, os->os_spa, txg,
 		    &dr->dr_bp_copy, contents, db->db.db_size, db->db.db_size,
@@ -4798,8 +4802,8 @@ dbuf_write(dbuf_dirty_record_t *dr, arc_buf_t *data, dmu_tx_t *tx)
 		    dr, ZIO_PRIORITY_ASYNC_WRITE, ZIO_FLAG_MUSTSUCCEED, &zb);
 		mutex_enter(&db->db_mtx);
 		dr->dt.dl.dr_override_state = DR_NOT_OVERRIDDEN;
-		zio_write_override(dr->dr_zio, &dr->dt.dl.dr_overridden_by,
-		    dr->dt.dl.dr_copies, dr->dt.dl.dr_nopwrite);
+		zio_write_override(dr->dr_zio, bp, dr->dt.dl.dr_copies,
+		    dr->dt.dl.dr_nopwrite);
 		mutex_exit(&db->db_mtx);
 	} else if (db->db_state == DB_NOFILL) {
 		ASSERT(zp.zp_checksum == ZIO_CHECKSUM_OFF ||
