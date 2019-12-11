@@ -4767,7 +4767,7 @@ dbuf_write(dbuf_dirty_record_t *dr, arc_buf_t *data, dmu_tx_t *tx)
 
 	if (db->db_blkid == DMU_SPILL_BLKID)
 		wp_flag = WP_SPILL;
-	wp_flag |= (db->db_state == DB_NOFILL) ? WP_NOFILL : 0;
+	wp_flag |= (db->db_state == DB_NOFILL && data == NULL) ? WP_NOFILL : 0;
 
 	dmu_write_policy(os, dn, db->db_level, wp_flag, &zp);
 	DB_DNODE_EXIT(db);
@@ -4805,7 +4805,7 @@ dbuf_write(dbuf_dirty_record_t *dr, arc_buf_t *data, dmu_tx_t *tx)
 		zio_write_override(dr->dr_zio, bp, dr->dt.dl.dr_copies,
 		    dr->dt.dl.dr_nopwrite);
 		mutex_exit(&db->db_mtx);
-	} else if (db->db_state == DB_NOFILL) {
+	} else if (db->db_state == DB_NOFILL && data == NULL) {
 		ASSERT(zp.zp_checksum == ZIO_CHECKSUM_OFF ||
 		    zp.zp_checksum == ZIO_CHECKSUM_NOPARITY);
 		dr->dr_zio = zio_write(zio, os->os_spa, txg,
