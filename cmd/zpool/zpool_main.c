@@ -7116,8 +7116,21 @@ print_scan_status(pool_scan_stat_t *ps)
 	pass_issued = ps->pss_pass_issued;
 	total = ps->pss_to_examine;
 
-	/* we are only done with a block once we have issued the IO for it */
-	fraction_done = (double)issued / total;
+	if (ps->pss_func == POOL_SCAN_REBUILD) {
+		/*
+		 * "issued" only corresponds to a fraction of the
+		 * the total scanned pool size (just for the blocks that
+		 * needs to be rebuilt). So using "scanned" to calculate
+		 * the percent complete.
+		 */
+		fraction_done = (double)scanned / total;
+	} else {
+		/*
+		 * we are only done with a block once we have issued
+		 * the IO for it
+		 */
+		fraction_done = (double)issued / total;
+	}
 
 	/* elapsed time for this pass, rounding up to 1 if it's 0 */
 	elapsed = time(NULL) - ps->pss_pass_start;
