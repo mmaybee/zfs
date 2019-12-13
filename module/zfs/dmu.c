@@ -1053,7 +1053,7 @@ dmu_read_abd(dnode_t *dn, uint64_t offset, uint64_t size,
 				abd_copy_from_buf_off(data,
 				    db->db.db_data + boff, aoff, len);
 			else
-				bzero(db->db.db_data + boff, len);
+				abd_zero_off(data, aoff, len);
 			rw_exit(&db->db_rwlock);
 			continue;
 		}
