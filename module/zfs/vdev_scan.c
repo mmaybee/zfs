@@ -156,7 +156,7 @@ spa_vdev_scan_rebuild(spa_vdev_scan_t *svs, zio_t *pio,
 	if (vd->vdev_ops == &vdev_draid_ops)
 		max_asize = vdev_draid_max_rebuildable_asize(vd, offset);
 	else
-		max_asize = vdev_psize_to_asize(vd, SPA_MAXBLOCKSIZE);
+		max_asize = vdev_psize_to_asize(vd, offset, SPA_MAXBLOCKSIZE);
 
 	while (length > 0 && !svs->svs_thread_exit) {
 		uint64_t chunksz = MIN(length, max_asize);

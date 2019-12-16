@@ -21,6 +21,9 @@
 # Copyright (c) 2017, Intel Corporation.
 #
 
+# Turns on generation of draid groups of different sizes if non-zero
+degenerate=1
+
 BASE_DIR=$(dirname "$0")
 SCRIPT_COMMON=common.sh
 if [ -f "${BASE_DIR}/${SCRIPT_COMMON}" ]; then
@@ -315,8 +318,14 @@ while [[ $timeout -eq 0 ]] || [[ $curtime -le $((starttime + timeout)) ]]; do
 			fi
 		esac
 
+		if [[ $degenerate -gt 0 ]]; then
+			draid_extra=$((RANDOM % draid_data))
+		else
+			draid_extra=0
+		fi
 		zopt="$zopt -K draid"
-		zopt="$zopt -D $draid_data"
+		zopt="$zopt -D $(((draid_data + parity) * draid_groups + \
+			draid_spares + draid_extra))"
 		zopt="$zopt -G $draid_groups"
 		zopt="$zopt -S $draid_spares"
 		zopt="$zopt -C $class"

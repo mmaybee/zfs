@@ -41,7 +41,7 @@ extern "C" {
 extern boolean_t vdev_draid_ms_mirrored(const vdev_t *, uint64_t);
 extern boolean_t vdev_draid_group_degraded(vdev_t *, vdev_t *,
     uint64_t, uint64_t, boolean_t);
-extern uint64_t vdev_draid_check_block(const vdev_t *vd, uint64_t, uint64_t);
+extern uint64_t vdev_draid_check_block(const vdev_t *, uint64_t, uint64_t *);
 extern uint64_t vdev_draid_get_astart(const vdev_t *, const uint64_t);
 extern uint64_t vdev_draid_offset2group(const vdev_t *, uint64_t, boolean_t);
 extern uint64_t vdev_draid_group2offset(const vdev_t *, uint64_t, boolean_t);

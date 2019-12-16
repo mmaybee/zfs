@@ -968,7 +968,8 @@ zfs_blkptr_verify(spa_t *spa, const blkptr_t *bp, boolean_t config_held)
 		uint64_t offset = DVA_GET_OFFSET(&bp->blk_dva[i]);
 		uint64_t asize = DVA_GET_ASIZE(&bp->blk_dva[i]);
 		if (BP_IS_GANG(bp))
-			asize = vdev_psize_to_asize(vd, SPA_GANGBLOCKSIZE);
+			asize = vdev_psize_to_asize(vd,
+			    offset, SPA_GANGBLOCKSIZE);
 		if (offset + asize > vd->vdev_asize) {
 			zfs_panic_recover("blkptr at %p DVA %u has invalid "
 			    "OFFSET %llu",
@@ -1002,7 +1003,7 @@ zfs_dva_valid(spa_t *spa, const dva_t *dva, const blkptr_t *bp)
 	uint64_t asize = DVA_GET_ASIZE(dva);
 
 	if (BP_IS_GANG(bp))
-		asize = vdev_psize_to_asize(vd, SPA_GANGBLOCKSIZE);
+		asize = vdev_psize_to_asize(vd, offset, SPA_GANGBLOCKSIZE);
 	if (offset + asize > vd->vdev_asize)
 		return (B_FALSE);
 
@@ -4149,7 +4150,7 @@ zio_checksum_verify(zio_t *zio)
 		if (zio->io_prop.zp_checksum == ZIO_CHECKSUM_OFF)
 			return (zio);
 
-		ASSERT(zio->io_prop.zp_checksum == ZIO_CHECKSUM_LABEL);
+		ASSERT3U(zio->io_prop.zp_checksum, ==, ZIO_CHECKSUM_LABEL);
 	}
 
 	if ((error = zio_checksum_error(zio, &info)) != 0) {
