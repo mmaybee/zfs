@@ -1964,6 +1964,11 @@ dbuf_redirty(dbuf_dirty_record_t *dr)
 			ASSERT(arc_released(db->db_buf));
 			arc_buf_thaw(db->db_buf);
 		}
+		/*
+		 * If initial dirty was via directio, may not have a dr_data.
+		 */
+		if (dr->dt.dl.dr_data == NULL)
+			dr->dt.dl.dr_data = db->db_buf;
 	}
 }
 
