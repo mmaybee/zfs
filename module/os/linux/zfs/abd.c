@@ -1306,6 +1306,8 @@ struct abd_iter {
 	size_t		iter_offset;	/* offset in current sg/abd_buf, */
 					/* abd_offset included */
 	struct scatterlist *iter_sg;	/* current sg */
+	abd_link_t	*iter_mlink;	/* current multi-list link */
+	size_t		iter_subpos;	/* current multi-list element pos */
 #ifndef HAVE_1ARG_KMAP_ATOMIC
 	int		iter_km;	/* KM_* for kmap_atomic */
 #endif
@@ -1318,15 +1320,21 @@ static void
 abd_iter_init(struct abd_iter *aiter, abd_t *abd, int km_type)
 {
 	abd_verify(abd);
-	ASSERT(!abd_is_multi(abd));
 	aiter->iter_abd = abd;
 	aiter->iter_mapaddr = NULL;
 	aiter->iter_mapsize = 0;
 	aiter->iter_pos = 0;
+	aiter->iter_mlink = NULL;
+	aiter->iter_subpos = 0;
+	if (abd_is_multi(abd)) {
+		aiter->iter_mlink = list_head(&ABD_MULTI(abd).abd_chain);
+		abd = aiter->iter_mlink->link_abd;
+	}
 	if (abd_is_linear(abd)) {
 		aiter->iter_offset = 0;
 		aiter->iter_sg = NULL;
 	} else {
+		VERIFY(!abd_is_multi(abd));
 		aiter->iter_offset = ABD_SCATTER(abd).abd_offset;
 		aiter->iter_sg = ABD_SCATTER(abd).abd_sgl;
 	}
@@ -1344,16 +1352,50 @@ abd_iter_init(struct abd_iter *aiter, abd_t *abd, int km_type)
 static void
 abd_iter_advance(struct abd_iter *aiter, size_t amount)
 {
+	abd_t *abd = aiter->iter_abd;
+
 	ASSERT3P(aiter->iter_mapaddr, ==, NULL);
 	ASSERT0(aiter->iter_mapsize);
+
+	aiter->iter_pos += amount;
+	ASSERT3U(aiter->iter_pos, <=, aiter->iter_abd->abd_size);
 
 	/* There's nothing left to advance to, so do nothing */
 	if (aiter->iter_pos == aiter->iter_abd->abd_size)
 		return;
 
-	aiter->iter_pos += amount;
 	aiter->iter_offset += amount;
-	if (!abd_is_linear(aiter->iter_abd)) {
+
+	/*
+	 * If this is a multi-abd, we need to advance to the
+	 * appropriate sub-abd.
+	 */
+	if (abd_is_multi(abd)) {
+		aiter->iter_subpos += amount;
+		abd = aiter->iter_mlink->link_abd;
+		while (aiter->iter_subpos >= abd->abd_size) {
+			aiter->iter_subpos -= abd->abd_size;
+			aiter->iter_mlink = list_next(
+			    &ABD_MULTI(aiter->iter_abd).abd_chain,
+			    aiter->iter_mlink);
+			abd = aiter->iter_mlink->link_abd;
+			VERIFY(!abd_is_multi(abd));
+		}
+		aiter->iter_sg = 0;
+		aiter->iter_offset = aiter->iter_subpos;
+
+		if (!abd_is_linear(abd)) {
+			aiter->iter_sg = ABD_SCATTER(abd).abd_sgl;
+			aiter->iter_offset += ABD_SCATTER(abd).abd_offset;
+		}
+	}
+
+	/*
+	 * If this is a scatter/gather list abd, we need to advance to the
+	 * appropriate list segment.
+	 */
+	if (!abd_is_linear(abd)) {
+		ASSERT(aiter->iter_offset >= 0);
 		while (aiter->iter_offset >= aiter->iter_sg->length) {
 			aiter->iter_offset -= aiter->iter_sg->length;
 			aiter->iter_sg = sg_next(aiter->iter_sg);
@@ -1373,22 +1415,24 @@ static void
 abd_iter_map(struct abd_iter *aiter)
 {
 	void *paddr;
-	size_t offset = 0;
+	abd_t *abd = aiter->iter_abd;
+	size_t offset = aiter->iter_offset;
 
 	ASSERT3P(aiter->iter_mapaddr, ==, NULL);
 	ASSERT0(aiter->iter_mapsize);
+	ASSERT3U(aiter->iter_pos, <=, aiter->iter_abd->abd_size);
 
 	/* There's nothing left to iterate over, so do nothing */
-	if (aiter->iter_pos == aiter->iter_abd->abd_size)
+	if (aiter->iter_pos == abd->abd_size)
 		return;
 
-	if (abd_is_linear(aiter->iter_abd)) {
-		ASSERT3U(aiter->iter_pos, ==, aiter->iter_offset);
-		offset = aiter->iter_offset;
-		aiter->iter_mapsize = aiter->iter_abd->abd_size - offset;
-		paddr = aiter->iter_abd->abd_u.abd_linear.abd_buf;
+	if (abd_is_multi(abd))
+		abd = aiter->iter_mlink->link_abd;
+
+	if (abd_is_linear(abd)) {
+		aiter->iter_mapsize = abd->abd_size - offset;
+		paddr = abd->abd_u.abd_linear.abd_buf;
 	} else {
-		offset = aiter->iter_offset;
 		aiter->iter_mapsize = MIN(aiter->iter_sg->length - offset,
 		    aiter->iter_abd->abd_size - aiter->iter_pos);
 
@@ -1406,18 +1450,24 @@ abd_iter_map(struct abd_iter *aiter)
 static void
 abd_iter_unmap(struct abd_iter *aiter)
 {
-	/* There's nothing left to unmap, so do nothing */
-	if (aiter->iter_pos == aiter->iter_abd->abd_size)
-		return;
+	abd_t *abd = aiter->iter_abd;
 
-	if (!abd_is_linear(aiter->iter_abd)) {
+	/* There's nothing left to unmap, so do nothing */
+	if (aiter->iter_mapaddr == NULL) {
+		ASSERT3U(aiter->iter_pos, ==, abd->abd_size);
+		return;
+	}
+	ASSERT(aiter->iter_pos < abd->abd_size);
+	ASSERT3U(aiter->iter_mapsize, >, 0);
+
+	if (abd_is_multi(abd))
+		abd = aiter->iter_mlink->link_abd;
+
+	if (!abd_is_linear(abd)) {
 		/* LINTED E_FUNC_SET_NOT_USED */
 		zfs_kunmap_atomic(aiter->iter_mapaddr - aiter->iter_offset,
 		    km_table[aiter->iter_km]);
 	}
-
-	ASSERT3P(aiter->iter_mapaddr, !=, NULL);
-	ASSERT3U(aiter->iter_mapsize, >, 0);
 
 	aiter->iter_mapaddr = NULL;
 	aiter->iter_mapsize = 0;
@@ -1452,12 +1502,12 @@ abd_iterate_func(abd_t *abd, size_t off, size_t size,
 
 	abd_verify(abd);
 	ASSERT3U(off + size, <=, abd->abd_size);
-
+#if 0
 	if (abd_is_multi(abd)) {
 		ret = abd_iterate_multi(abd, off, size, func, private);
 		return (ret);
 	}
-
+#endif
 	abd_iter_init(&aiter, abd, 0);
 	abd_iter_advance(&aiter, off);
 
