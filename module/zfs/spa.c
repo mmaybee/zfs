@@ -257,6 +257,13 @@ int zfs_livelist_condense_zthr_cancel = 0;
 int zfs_livelist_condense_new_alloc = 0;
 
 /*
+ * Parameter to set the "typical" block size when computing the deflation ratio
+ * for raidz (and draid) configurations. Historically, this has always been
+ * 128k (17)
+ */
+int zfs_deflate_shift = 17;
+
+/*
  * ==========================================================================
  * SPA properties routines
  * ==========================================================================
@@ -5777,6 +5784,13 @@ spa_create(const char *pool, nvlist_t *nvroot, nvlist_t *props,
 	spa->spa_indirect_vdevs_loaded = B_TRUE;
 
 	/*
+	 * Newly created pools with the right version are always
+	 * deflated.
+	 */
+	if (version >= SPA_VERSION_RAIDZ_DEFLATE)
+		spa->spa_deflate = zfs_deflate_shift;
+
+	/*
 	 * Create "The Godfather" zio to hold all async IOs
 	 */
 	spa->spa_async_zio_root = kmem_alloc(max_ncpus * sizeof (void *),
@@ -5901,9 +5915,7 @@ spa_create(const char *pool, nvlist_t *nvroot, nvlist_t *props,
 		cmn_err(CE_PANIC, "failed to add pool version");
 	}
 
-	/* Newly created pools with the right version are always deflated. */
-	if (version >= SPA_VERSION_RAIDZ_DEFLATE) {
-		spa->spa_deflate = TRUE;
+	if (spa->spa_deflate > 0) {
 		if (zap_add(spa->spa_meta_objset,
 		    DMU_POOL_DIRECTORY_OBJECT, DMU_POOL_DEFLATE,
 		    sizeof (uint64_t), 1, &spa->spa_deflate, tx) != 0) {
@@ -9805,4 +9817,7 @@ ZFS_MODULE_PARAM(zfs_livelist_condense, zfs_livelist_condense_, zthr_cancel, INT
 ZFS_MODULE_PARAM(zfs_livelist_condense, zfs_livelist_condense_, new_alloc, INT, ZMOD_RW,
 	"Whether extra ALLOC blkptrs were added to a livelist entry while it "
 	"was being condensed");
+
+ZFS_MODULE_PARAM(zfs, zfs_, deflate_shift, INT, ZMOD_RW,
+	"Define the typical block size used to compute deflation ratio");
 /* END CSTYLED */
