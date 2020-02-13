@@ -441,6 +441,14 @@ typedef enum kmem_cbrc {
 } kmem_cbrc_t;
 
 /*
+ * Memory Alignment
+ */
+
+#define IS_ALIGNED(x, a)	(((x) & ((typeof(x))(a) - 1)) == 0)
+/* test whether an address (unsigned long or pointer) is aligned to PAGE_SIZE */
+#define PAGE_ALIGNED(addr)	IS_ALIGNED((unsigned long)(addr), sysconf(_SC_PAGESIZE))
+
+/*
  * Task queues
  */
 

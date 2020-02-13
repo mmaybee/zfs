@@ -53,6 +53,7 @@
 #include <sys/zfs_rlock.h>
 #ifdef _KERNEL
 #include <sys/vmsystm.h>
+#include <sys/sysmacros.h>
 #include <sys/zfs_znode.h>
 #include <linux/kmap_compat.h>
 #endif
@@ -1165,7 +1166,8 @@ dmu_read_by_dnode(dnode_t *dn, uint64_t offset, uint64_t size, void *buf,
 {
 	int align = dn->dn_datablksz;
 
-	if (zfs_force_directio && IO_ALIGNED(offset, size, align))
+	if (zfs_force_directio && PAGE_ALIGNED(buf) &&
+	    IO_ALIGNED(offset, size, align))
 		flags |= DMU_DIRECTIO;
 	return (dmu_read_impl(dn, offset, size, buf, flags));
 }
@@ -1812,7 +1814,8 @@ dmu_write_by_dnode(dnode_t *dn, uint64_t offset, uint64_t size,
 	if (size == 0)
 		return;
 
-	if (zfs_force_directio && IO_ALIGNED(offset, size, align)) {
+	if (zfs_force_directio && PAGE_ALIGNED(buf) &&
+	    IO_ALIGNED(offset, size, align)) {
 		abd_t *data = abd_get_from_buf((void *)buf, size);
 		VERIFY0(dmu_write_abd(dn, offset, size,
 		    data, DMU_DIRECTIO, tx));
@@ -2036,17 +2039,17 @@ dmu_rw_uio_direct(dnode_t *dn, uio_t *uio, uint64_t size,
     dmu_tx_t *tx, boolean_t read)
 {
 	const struct iovec *iov = uio->uio_iov;
-	ulong_t addr = (ulong_t)iov->iov_base;
+	ulong_t addr = (ulong_t)iov->iov_base + uio->uio_skip;
 	uint_t numpages;
 	abd_t *data;
 	int err;
 
-	if (uio->uio_iovcnt != 1 ||
+	if (uio->uio_iovcnt != 1 || !PAGE_ALIGNED(addr) ||
 	    !IO_PAGE_ALIGNED(uio->uio_loffset, size)) {
 		/*
 		 * All Direct IO requests must be PAGE_SIZE aligned
 		 */
-		return (SET_ERROR(ENOTSUP));
+		return (SET_ERROR(EINVAL));
 	}
 
 	ASSERT(size % PAGE_SIZE == 0);
