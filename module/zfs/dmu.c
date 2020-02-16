@@ -79,7 +79,14 @@ int zfs_dmu_offset_next_sync = 0;
 /*
  * Force direct IO on read/write calls that do not have a flag.
  */
-int zfs_force_directio = 1;
+typedef enum _zfs_directio_flags {
+	ZFS_DIRECT_IO_OFF	= 0,
+	ZFS_DIRECT_IO_READ	= 1,
+	ZFS_DIRECT_IO_WRITE	= 2,
+	ZFS_DIRECT_IO_RW	= 3
+} zfs_directio_flags;
+
+int zfs_force_directio = ZFS_DIRECT_IO_RW;
 
 /*
  * Limit the amount we can prefetch with one call to this amount.  This
@@ -1166,7 +1173,7 @@ dmu_read_by_dnode(dnode_t *dn, uint64_t offset, uint64_t size, void *buf,
 {
 	int align = dn->dn_datablksz;
 
-	if (zfs_force_directio && PAGE_ALIGNED(buf) &&
+	if ((zfs_force_directio & ZFS_DIRECT_IO_READ) && PAGE_ALIGNED(buf) &&
 	    IO_ALIGNED(offset, size, align))
 		flags |= DMU_DIRECTIO;
 	return (dmu_read_impl(dn, offset, size, buf, flags));
@@ -1814,7 +1821,7 @@ dmu_write_by_dnode(dnode_t *dn, uint64_t offset, uint64_t size,
 	if (size == 0)
 		return;
 
-	if (zfs_force_directio && PAGE_ALIGNED(buf) &&
+	if ((zfs_force_directio & ZFS_DIRECT_IO_WRITE) && PAGE_ALIGNED(buf) &&
 	    IO_ALIGNED(offset, size, align)) {
 		abd_t *data = abd_get_from_buf((void *)buf, size);
 		VERIFY0(dmu_write_abd(dn, offset, size,
@@ -2416,7 +2423,7 @@ dmu_assign_arcbuf_by_dnode(dnode_t *dn, uint64_t offset, arc_buf_t *buf,
 	 * same size as the dbuf, and the dbuf is not metadata.
 	 */
 	if (offset == db->db.db_offset && blksz == db->db.db_size) {
-		if (zfs_force_directio) {
+		if (zfs_force_directio & ZFS_DIRECT_IO_WRITE) {
 			int err = 0;
 			abd_t *data = abd_get_from_buf(buf->b_data, blksz);
 			rw_enter(&db->db_rwlock, RW_WRITER);
