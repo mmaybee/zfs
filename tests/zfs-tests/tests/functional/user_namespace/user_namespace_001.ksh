@@ -49,6 +49,14 @@ function cleanup
 
 log_onexit cleanup
 
+# Increase the  number of namespaces for users,
+# if set to zero earlier.
+LINUX_NAMESPACES=$(cat /proc/sys/user/max_user_namespaces)
+
+if (($LINUX_NAMESPACES == 0)); then
+   log_must echo 640 > /proc/sys/user/max_user_namespaces
+fi
+
 log_assert "Check root in user namespaces"
 
 TOUCH=$(readlink -e $(which touch))
