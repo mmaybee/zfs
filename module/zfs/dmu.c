@@ -1824,10 +1824,11 @@ dmu_write_by_dnode(dnode_t *dn, uint64_t offset, uint64_t size,
 	if ((zfs_force_directio & ZFS_DIRECT_IO_WRITE) && PAGE_ALIGNED(buf) &&
 	    IO_ALIGNED(offset, size, align)) {
 		abd_t *data = abd_get_from_buf((void *)buf, size);
-		VERIFY0(dmu_write_abd(dn, offset, size,
-		    data, DMU_DIRECTIO, tx));
+		int err = dmu_write_abd(dn, offset, size, data,
+		    DMU_DIRECTIO, tx);
 		abd_put(data);
-		return;
+		if (err == 0)
+			return;
 	}
 
 	VERIFY0(dmu_buf_hold_array_by_dnode(dn, offset, size,
