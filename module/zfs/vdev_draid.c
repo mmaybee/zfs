@@ -141,8 +141,8 @@ vdev_draid_map_alloc(zio_t *zio, uint64_t **array)
 	/* The zio's size in units of the vdev's minimum sector size. */
 	const uint64_t psize = zio->io_size >> unit_shift;
 	const uint64_t slice = DRAID_SLICESIZE >> unit_shift;
-	uint64_t o, q, r, c, bc, acols, asize, tot, ndata;
-	uint64_t perm, group, offset, groupsz, abd_off;
+	uint64_t o, q, r, c, bc, acols, asize, tot, ndata = 0;
+	uint64_t perm, group, offset, groupsz = 0, groupstart, abd_off;
 	raidz_map_t *rm;
 	uint64_t *permutation;
 
@@ -156,19 +156,22 @@ vdev_draid_map_alloc(zio_t *zio, uint64_t **array)
 	perm = b / ((ncols - nspare) * slice);
 	offset = b % ((ncols - nspare) * slice);
 	/* Figure out in which group the IO will fall */
-	for (group = 0; group < ngroups; group++) {
-		uint64_t span = (cfg->dcf_data[group] + nparity) * slice;
+	for (group = 0, groupstart = 0; group < ngroups; group++) {
+		ndata = cfg->dcf_data[group];
+		groupsz = ndata + nparity;
+		uint64_t span = groupsz * slice;
 		if (offset < span)
 			break;
 		offset -= span;
+		groupstart += groupsz;
 	}
 	ASSERT3U(group, <, ngroups);
 	ASSERT3U(group, ==,
 	    vdev_draid_offset2group(vd, zio->io_offset, B_FALSE) % ngroups);
-	ndata = cfg->dcf_data[group];
-	groupsz = ndata + nparity;
+
 	/* offset is now a sector offset within this group chunk */
 	ASSERT0(offset % groupsz);
+	ASSERT3U(groupstart + groupsz, <=, ncols - nspare);
 
 	/* The starting byte offset on each child vdev. */
 	o = (perm * slice + offset / groupsz) << unit_shift;
@@ -220,7 +223,7 @@ vdev_draid_map_alloc(zio_t *zio, uint64_t **array)
 	VERIFY0(vdev_draid_get_permutation(permutation, perm, cfg));
 
 	for (c = 0, asize = 0; c < groupsz; c++) {
-		uint64_t i = group * (nparity + ndata) + c;
+		uint64_t i = groupstart + c;
 
 		ASSERT3U(i, <, ncols - nspare);
 
@@ -243,8 +246,8 @@ vdev_draid_map_alloc(zio_t *zio, uint64_t **array)
 	}
 
 	ASSERT3U(asize, ==, tot << unit_shift);
-	rm->rm_asize = roundup(asize, (ndata + nparity) << unit_shift);
-	rm->rm_nskip = roundup(tot, ndata + nparity) - tot;
+	rm->rm_asize = roundup(asize, groupsz << unit_shift);
+	rm->rm_nskip = roundup(tot, groupsz) - tot;
 	ASSERT3U(rm->rm_asize - asize, ==, rm->rm_nskip << unit_shift);
 	ASSERT3U(rm->rm_nskip, <, ndata);
 
