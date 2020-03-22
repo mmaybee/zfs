@@ -1071,7 +1071,7 @@ dmu_read_abd(dnode_t *dn, uint64_t offset, uint64_t size,
 
 		zio = zio_read(rio, spa, bp, mbuf, db->db.db_size,
 		    dmu_read_abd_done, NULL,
-		    ZIO_PRIORITY_SYNC_READ, 0, NULL);
+		    ZIO_PRIORITY_SYNC_READ, ZIO_FLAG_CANFAIL, NULL);
 
 		if (i+1 == numbufs)
 			err = zio_wait(zio);
