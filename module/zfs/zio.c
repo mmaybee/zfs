@@ -3883,11 +3883,14 @@ zio_vdev_io_assess(zio_t *zio)
 	/*
 	 * If we can't write to an interior vdev (mirror or RAID-Z),
 	 * set vdev_cant_write so that we stop trying to allocate from it.
+	 * Note, a distributed spare for a dRAID can potentially get an ENXIO
+	 * from one of its "children", but we don't want to mark the entire
+	 * drive as vdev_cant_write.
 	 */
 	if (zio->io_error == ENXIO && zio->io_type == ZIO_TYPE_WRITE &&
-	    vd != NULL && !vd->vdev_ops->vdev_op_leaf) {
+	    vd != NULL && !vd->vdev_ops->vdev_op_leaf &&
+	    vd->vdev_top->vdev_ops != &vdev_draid_ops)
 		vd->vdev_cant_write = B_TRUE;
-	}
 
 	/*
 	 * If a cache flush returns ENOTSUP or ENOTTY, we know that no future
