@@ -47,7 +47,7 @@
 uint64_t
 vdev_draid_asize_by_type(const vdev_t *, uint64_t, uint64_t, boolean_t);
 
-int draid_debug_lvl = 3;
+int draid_debug_lvl = 0;
 
 static void
 vdev_draid_debug_map(int lvl, raidz_map_t *rm)
