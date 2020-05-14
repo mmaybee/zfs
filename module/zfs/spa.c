@@ -6639,6 +6639,7 @@ spa_vdev_add(spa_t *spa, nvlist_t *nvroot)
 }
 
 static int spa_rebuild_mirror = 0;
+static int spa_rebuild_draid = 0;
 /*
  * Attach a device to a mirror.  The arguments are the path to any device
  * in the mirror, and the nvroot for the new device.  If the path specifies
@@ -6848,7 +6849,8 @@ spa_vdev_attach(spa_t *spa, uint64_t guid, nvlist_t *nvroot, int replacing)
 	 */
 	vdev_dirty(tvd, VDD_DTL, newvd, txg);
 
-	if (newvd->vdev_ops == &vdev_draid_spare_ops ||
+	if ((newvd->vdev_ops == &vdev_draid_spare_ops &&
+	    spa_rebuild_draid != 0) ||
 	    (tvd->vdev_ops == &vdev_mirror_ops && spa_rebuild_mirror != 0))
 		rebuild = B_TRUE; /* HH: let zpool cmd choose */
 
@@ -9820,4 +9822,7 @@ ZFS_MODULE_PARAM(zfs_livelist_condense, zfs_livelist_condense_, new_alloc, INT, 
 
 ZFS_MODULE_PARAM(zfs, zfs_, deflate_shift, INT, ZMOD_RW,
 	"Define the typical block size used to compute deflation ratio");
+
+ZFS_MODULE_PARAM(zfs_spa, spa_, rebuild_draid, INT, ZMOD_RW,
+	"Set to enable rebuild on draid vdev");
 /* END CSTYLED */
